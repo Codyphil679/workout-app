@@ -10,7 +10,7 @@ LiftLog isn't on the Google Play Store, so you install it straight from a file. 
 
 1. On your phone, open this link in **Chrome**:
    **https://github.com/Codyphil679/workout-app/releases/latest**
-2. Scroll down to **Assets** and tap the file ending in **`.apk`** (for example `app-debug.apk`).
+2. Scroll down to **Assets** and tap the file ending in **`.apk`** (for example `LiftLog-1.0.0.apk`).
 3. If Chrome warns *"This type of file can harm your device"*, tap **Download anyway**.
 
 ## Step 2: Open the file
