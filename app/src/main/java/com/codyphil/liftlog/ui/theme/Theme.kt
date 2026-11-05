@@ -1,11 +1,13 @@
 package com.codyphil.liftlog.ui.theme
 
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
@@ -89,5 +91,8 @@ private val shapes = Shapes(
 
 @Composable
 fun LiftLogTheme(content: @Composable () -> Unit) {
-    MaterialTheme(colorScheme = colors, typography = typography, shapes = shapes, content = content)
+    MaterialTheme(colorScheme = colors, typography = typography, shapes = shapes) {
+        // Make light-on-dark the default for all text/icons, even outside a Scaffold or Surface.
+        CompositionLocalProvider(LocalContentColor provides Brand.TextHi, content = content)
+    }
 }

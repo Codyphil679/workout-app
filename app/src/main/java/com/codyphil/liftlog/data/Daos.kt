@@ -22,6 +22,10 @@ interface ExerciseDao {
     @Insert
     suspend fun insert(exercise: Exercise): Long
 
+    /** Returns -1 when an exercise with the same name already exists. */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertIgnore(exercise: Exercise): Long
+
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertAllIgnore(exercises: List<Exercise>)
 

@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 sealed interface WorkoutUiState {
@@ -40,8 +41,13 @@ class ActiveWorkoutViewModel(container: AppContainer) : ViewModel() {
 
     private fun loadLastTime(exerciseId: Long) {
         if (_lastTime.value.containsKey(exerciseId)) return
-        _lastTime.value += exerciseId to emptyList()
-        viewModelScope.launch { _lastTime.value += exerciseId to repo.lastTimeSets(exerciseId) }
+        _lastTime.update { it + (exerciseId to emptyList()) }
+        viewModelScope.launch {
+            // Query first, then update atomically. `value += id to query()` would read the map
+            // before suspending and drop results from other exercises loading at the same time.
+            val sets = repo.lastTimeSets(exerciseId)
+            _lastTime.update { it + (exerciseId to sets) }
+        }
     }
 
     fun launch(block: suspend () -> Unit) {

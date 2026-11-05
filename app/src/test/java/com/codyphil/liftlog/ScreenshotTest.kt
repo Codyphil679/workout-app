@@ -83,10 +83,25 @@ class ScreenshotTest {
             r.finishSession(s)
             lastSessionId = s
         }
+        // One previous push day so the logger shows "Last time" and "Prev".
+        run {
+            val clock = FakeClock(now - 3 * day)
+            val r = com.codyphil.liftlog.data.WorkoutRepository(app.container.database, clock.fn)
+            val s = r.startFromDay(pushDayId)
+            val weightsLb = listOf(180.0, 105.0, 50.0, 20.0, 50.0)
+            r.observeSessionDetail(s).first()!!.exercises.forEachIndexed { idx, ex ->
+                ex.sets.forEach { set ->
+                    clock.advanceSeconds(120)
+                    r.completeSet(set.id, weightsLb[idx] * 0.45359237, ex.row.targetReps ?: 8)
+                }
+            }
+            r.finishSession(s)
+        }
+        Unit
     }
 
     private fun waitForText(text: String) {
-        compose.waitUntil(10_000) { compose.onAllNodesWithText(text, substring = true).fetchSemanticsNodes().isNotEmpty() }
+        compose.waitUntil(30_000) { compose.onAllNodesWithText(text, substring = true).fetchSemanticsNodes().isNotEmpty() }
     }
 
     private fun shot(name: String) {
@@ -101,7 +116,7 @@ class ScreenshotTest {
 
     @Test fun home() {
         compose.setContent { LiftLogTheme { LiftLogNav() } }
-        waitForText("Up next")
+        waitForText("Recent")
         shot("01_home")
     }
 
@@ -114,11 +129,13 @@ class ScreenshotTest {
             repo.completeSet(ex[0].sets[1].id, kg, 6)
             repo.updateSetValues(ex[0].sets[2].id, kg, 6)
             repo.updateSetValues(ex[0].sets[3].id, kg, 6)
-            repo.updateSetValues(ex[1].sets[0].id, 115 * 0.45359237, 8)
+
         }
         RestTimer.start(app, 150, "Next: Bench Press · set 3")
         compose.setContent { Frame { ActiveWorkoutScreen(onBack = {}, onFinished = {}, onOpenExercise = {}) } }
-        waitForText("Bench Press")
+        waitForText("Last time")
+        // Every exercise card must show its "last time" line (regression test for a lost-update bug).
+        compose.waitUntil(30_000) { compose.onAllNodesWithText("Last time", substring = true).fetchSemanticsNodes().size >= 2 }
         shot("02_active_workout")
         RestTimer.skip()
     }

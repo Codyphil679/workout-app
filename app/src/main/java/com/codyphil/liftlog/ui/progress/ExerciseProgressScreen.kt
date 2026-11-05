@@ -52,6 +52,7 @@ import com.codyphil.liftlog.ui.components.TextPromptDialog
 import com.codyphil.liftlog.ui.theme.Brand
 import com.codyphil.liftlog.ui.theme.Numeric
 import kotlinx.coroutines.launch
+import kotlin.math.roundToLong
 
 enum class Metric(val label: String) { E1RM("Est. 1RM"), TOP("Top weight"), VOLUME("Volume") }
 
@@ -111,7 +112,7 @@ fun ExerciseProgressScreen(exerciseId: Long, onBack: () -> Unit, onOpenSession: 
                     val latest = points.last().value(metric)
                     val first = points.first().value(metric)
                     Row(verticalAlignment = Alignment.Bottom) {
-                        Text(Units.format(latest, unit), style = MaterialTheme.typography.displayMedium.merge(Numeric))
+                        Text(Units.formatWhole(latest, unit), style = MaterialTheme.typography.displayMedium.merge(Numeric))
                         Spacer(Modifier.width(6.dp))
                         Text(unit.label, style = MaterialTheme.typography.titleMedium, color = Brand.TextMid,
                             modifier = Modifier.padding(bottom = 10.dp))
@@ -119,7 +120,7 @@ fun ExerciseProgressScreen(exerciseId: Long, onBack: () -> Unit, onOpenSession: 
                         if (points.size > 1) {
                             val delta = Units.fromKg(latest - first, unit)
                             Text(
-                                (if (delta >= 0) "▲ " else "▼ ") + Units.formatNumber(kotlin.math.abs(delta)) + " ${unit.label}",
+                                (if (delta >= 0) "▲ " else "▼ ") + kotlin.math.abs(delta).roundToLong() + " ${unit.label}",
                                 color = if (delta >= 0) Brand.Volt else Brand.Ember,
                                 style = MaterialTheme.typography.titleSmall.merge(Numeric),
                                 modifier = Modifier.padding(bottom = 10.dp),
@@ -129,7 +130,7 @@ fun ExerciseProgressScreen(exerciseId: Long, onBack: () -> Unit, onOpenSession: 
                     if (points.size > 1) {
                         LineChart(
                             points = points.map { ChartPoint(it.date, it.value(metric)) },
-                            formatY = { Units.formatWithUnit(it, unit) },
+                            formatY = { "${Units.formatWhole(it, unit)} ${unit.label}" },
                             formatX = Format::dateShort,
                             modifier = Modifier.fillMaxWidth(),
                         )
@@ -152,7 +153,7 @@ fun ExerciseProgressScreen(exerciseId: Long, onBack: () -> Unit, onOpenSession: 
                             PrTile("Heaviest", Units.format(it.weightKg, unit), unit.label, "× ${it.reps} · ${Format.dateShort(it.startedAt)}", Modifier.weight(1f))
                         }
                         prs.bestE1rm?.let { (row, v) ->
-                            PrTile("Best e1RM", Units.format(v, unit), unit.label,
+                            PrTile("Best e1RM", Units.formatWhole(v, unit), unit.label,
                                 "${Units.format(row.weightKg, unit)}×${row.reps} · ${Format.dateShort(row.startedAt)}", Modifier.weight(1f))
                         }
                     }

@@ -35,7 +35,15 @@ Kotlin · Jetpack Compose (Material 3) · Room · no account, no backend. All da
 
 ## Screenshots
 
-These are real renders of the app's Compose UI with sample data (Robolectric + Roborazzi), not mockups. See [`docs/screenshots`](docs/screenshots).
+These are real renders of the app's Compose UI with sample data (Robolectric + Roborazzi), not mockups.
+
+| Home | Logging a workout | Program day |
+|---|---|---|
+| ![](docs/screenshots/01_home.png) | ![](docs/screenshots/02_active_workout.png) | ![](docs/screenshots/03_program_day.png) |
+
+| History | Workout detail | Exercise progress | Settings |
+|---|---|---|---|
+| ![](docs/screenshots/04_history.png) | ![](docs/screenshots/05_workout_detail.png) | ![](docs/screenshots/06_exercise_progress.png) | ![](docs/screenshots/07_settings.png) |
 
 ## Build & install
 

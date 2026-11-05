@@ -131,7 +131,7 @@ private fun ExerciseBlock(ex: SessionExerciseWithSets, unit: WeightUnit, onOpen:
                 Text(ex.row.exerciseName, style = MaterialTheme.typography.titleLarge)
                 if (best != null) {
                     Text(
-                        "Best set e1RM ${Units.formatWithUnit(Stats.e1rm(best.weightKg, best.reps), unit)}",
+                        "Best set e1RM ${Units.formatWhole(Stats.e1rm(best.weightKg, best.reps), unit)} ${unit.label}",
                         style = MaterialTheme.typography.bodySmall.merge(Numeric), color = Brand.TextMid,
                     )
                 }

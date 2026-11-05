@@ -20,6 +20,9 @@ object Units {
     /** Formats a weight for display: at most 2 decimals, trailing zeros stripped ("225", "102.5"). */
     fun format(kg: Double, unit: WeightUnit): String = formatNumber(fromKg(kg, unit))
 
+    /** Rounded to a whole number, for estimates like e1RM where decimals are false precision. */
+    fun formatWhole(kg: Double, unit: WeightUnit): String = fromKg(kg, unit).roundToLong().toString()
+
     fun formatWithUnit(kg: Double, unit: WeightUnit): String = "${format(kg, unit)} ${unit.label}"
 
     fun formatNumber(value: Double): String {

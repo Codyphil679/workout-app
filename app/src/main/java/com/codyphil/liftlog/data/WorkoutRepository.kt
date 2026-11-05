@@ -32,7 +32,9 @@ class WorkoutRepository(
         val clean = name.trim().replace(Regex("\\s+"), " ")
         require(clean.isNotEmpty()) { "Exercise name is empty" }
         exerciseDao.findByName(clean)?.let { return it.id }
-        return exerciseDao.insert(Exercise(name = clean))
+        // IGNORE + re-read handles a concurrent insert of the same name (e.g. first-launch seeding).
+        val id = exerciseDao.insertIgnore(Exercise(name = clean))
+        return if (id != -1L) id else requireNotNull(exerciseDao.findByName(clean)).id
     }
 
     /** Returns false if another exercise already has that name. */
