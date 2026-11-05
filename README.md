@@ -45,6 +45,10 @@ These are real renders of the app's Compose UI with sample data (Robolectric + R
 |---|---|---|---|
 | ![](docs/screenshots/04_history.png) | ![](docs/screenshots/05_workout_detail.png) | ![](docs/screenshots/06_exercise_progress.png) | ![](docs/screenshots/07_settings.png) |
 
+## Install on a phone (no developer tools)
+
+See **[INSTALL.md](INSTALL.md)** for a step-by-step guide to downloading and installing the APK.
+
 ## Build & install
 
 Requirements: JDK 17+ and the Android SDK (Android Studio installs both).
