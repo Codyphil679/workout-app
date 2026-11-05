@@ -47,7 +47,7 @@ These are real renders of the app's Compose UI with sample data (Robolectric + R
 
 ## Install on a phone (no developer tools)
 
-See **[INSTALL.md](INSTALL.md)** for a step-by-step guide to downloading and installing the APK.
+See **[INSTALL.md](INSTALL.md)** (or the printable [PDF version](docs/LiftLog-Install-Guide.pdf)) for a step-by-step guide to downloading and installing the APK.
 
 ## Build & install
 
