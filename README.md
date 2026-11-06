@@ -2,6 +2,15 @@
 
 A native Android workout tracker: build programs, log weight/reps, auto-start a rest timer, and see your full lifting history and progress.
 
+## 📲 Download
+
+**[⬇ Download the latest LiftLog for Android](https://github.com/Codyphil679/workout-app/releases/latest)**: open this on your phone and tap the `.apk` file under **Assets**.
+
+Free, no account needed. Requires Android 8.0+ (not available for iPhone).
+First time installing an app from outside the Play Store? Follow the **[step-by-step install guide](INSTALL.md)** ([PDF](docs/LiftLog-Install-Guide.pdf)).
+
+---
+
 Kotlin · Jetpack Compose (Material 3) · Room · no account, no backend. All data stays on the phone.
 
 ## Features
