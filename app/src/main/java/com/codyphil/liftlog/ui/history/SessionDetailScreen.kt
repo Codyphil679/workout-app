@@ -43,6 +43,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.codyphil.liftlog.data.SessionExerciseWithSets
+import com.codyphil.liftlog.data.SetType
 import com.codyphil.liftlog.domain.Format
 import com.codyphil.liftlog.domain.Stats
 import com.codyphil.liftlog.domain.Units
@@ -70,7 +71,8 @@ fun SessionDetailScreen(sessionId: Long, onBack: () -> Unit, onOpenExercise: (Lo
     val d = detail ?: return
     val s = d.session
     val unit = settings.unit
-    val allSets = d.exercises.flatMap { it.sets }.filter { it.completed }
+    // Totals count working sets only; warm-ups are shown but don't inflate sets or volume.
+    val allSets = d.exercises.flatMap { it.sets }.filter { it.completed && it.setType != SetType.WARMUP }
 
     Scaffold(
         containerColor = Brand.Ink,
@@ -124,7 +126,8 @@ fun SessionDetailScreen(sessionId: Long, onBack: () -> Unit, onOpenExercise: (Lo
 @Composable
 private fun ExerciseBlock(ex: SessionExerciseWithSets, unit: WeightUnit, onOpen: () -> Unit) {
     val sets = ex.sets.filter { it.completed }
-    val best = sets.maxByOrNull { Stats.e1rm(it.weightKg, it.reps) }
+    val working = sets.filter { it.setType != SetType.WARMUP }
+    val best = working.maxByOrNull { Stats.e1rm(it.weightKg, it.reps) }
     Panel(contentPadding = PaddingValues(16.dp)) {
         Row(Modifier.fillMaxWidth().clickable(onClick = onOpen), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
@@ -145,20 +148,28 @@ private fun ExerciseBlock(ex: SessionExerciseWithSets, unit: WeightUnit, onOpen:
             Eyebrow("Rest before", modifier = Modifier.width(96.dp))
         }
         sets.forEach { set ->
+            val (marker, markerColor) = when (set.setType) {
+                SetType.WARMUP -> "W" to Brand.Ember
+                SetType.FAILURE -> "F" to Brand.Danger
+                SetType.DROP -> "D" to Brand.Ice
+                SetType.NORMAL -> (working.indexOf(set) + 1).toString() to Brand.TextMid
+            }
+            val isWarmup = set.setType == SetType.WARMUP
             Row(Modifier.fillMaxWidth().padding(vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     Modifier.size(28.dp).clip(RoundedCornerShape(8.dp)).background(Brand.PanelHigh),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Text(set.setNumber.toString(), style = MaterialTheme.typography.labelLarge.merge(Numeric), color = Brand.TextMid)
+                    Text(marker, style = MaterialTheme.typography.labelLarge.merge(Numeric), color = markerColor)
                 }
                 Spacer(Modifier.width(16.dp))
                 Text(
-                    "${Units.format(set.weightKg, unit)} ${unit.label} × ${set.reps}",
+                    "${Units.format(set.weightKg, unit)} ${unit.label} × ${set.reps}" + (set.rpe?.let { "  @${Units.formatNumber(it)}" } ?: ""),
                     style = MaterialTheme.typography.titleMedium.merge(Numeric),
+                    color = if (isWarmup) Brand.TextLow else Brand.TextHi,
                     modifier = Modifier.weight(1f),
                 )
-                if (set == best && sets.size > 1) {
+                if (set == best && working.size > 1) {
                     Icon(Icons.Rounded.EmojiEvents, "Top set", tint = Brand.Ember, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(6.dp))
                 }

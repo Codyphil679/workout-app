@@ -35,6 +35,7 @@ import com.codyphil.liftlog.ui.history.SessionDetailScreen
 import com.codyphil.liftlog.ui.programs.DayEditorScreen
 import com.codyphil.liftlog.ui.programs.ProgramDetailScreen
 import com.codyphil.liftlog.ui.programs.ProgramsScreen
+import com.codyphil.liftlog.ui.progress.BodyScreen
 import com.codyphil.liftlog.ui.progress.ExerciseProgressScreen
 import com.codyphil.liftlog.ui.progress.ProgressScreen
 import com.codyphil.liftlog.ui.settings.SettingsScreen
@@ -52,6 +53,7 @@ object Routes {
     const val PROGRESS = "progress"
     const val SETTINGS = "settings"
     const val WORKOUT = "workout"
+    const val BODY = "body"
     fun program(id: Long) = "program/$id"
     fun day(id: Long) = "day/$id"
     fun session(id: Long) = "session/$id"
@@ -114,9 +116,13 @@ fun LiftLogNav() {
                 HistoryScreen(onOpenSession = { nav.navigate(Routes.session(it)) })
             }
             composable(Routes.PROGRESS) {
-                ProgressScreen(onOpenExercise = { nav.navigate(Routes.exercise(it)) })
+                ProgressScreen(
+                    onOpenExercise = { nav.navigate(Routes.exercise(it)) },
+                    onOpenBody = { nav.navigate(Routes.BODY) },
+                )
             }
             composable(Routes.SETTINGS) { SettingsScreen() }
+            composable(Routes.BODY) { BodyScreen(onBack = { nav.popBackStack() }) }
             composable(Routes.WORKOUT) {
                 ActiveWorkoutScreen(
                     onBack = { nav.popBackStack() },

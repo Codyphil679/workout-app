@@ -32,6 +32,15 @@ interface ExerciseDao {
     @Update
     suspend fun update(exercise: Exercise)
 
+    @Query("UPDATE exercises SET muscle = :muscle WHERE id = :id")
+    suspend fun setMuscle(id: Long, muscle: Muscle)
+
+    @Query("UPDATE exercises SET name = :name WHERE id = :id")
+    suspend fun rename(id: Long, name: String)
+
+    @Query("UPDATE exercises SET muscle = :muscle WHERE muscle = 'OTHER' AND name = :name COLLATE NOCASE")
+    suspend fun backfillMuscle(name: String, muscle: Muscle)
+
     @Query("DELETE FROM exercises WHERE id = :id")
     suspend fun delete(id: Long)
 
@@ -109,7 +118,8 @@ interface ProgramDao {
     // Day exercises
     @Query(
         """SELECT de.id, de.dayId, de.exerciseId, e.name AS exerciseName, de.position,
-                  de.targetSets, de.targetReps, de.targetWeightKg, de.restSeconds
+                  de.targetSets, de.targetReps, de.targetWeightKg, de.restSeconds,
+                  de.progression, de.incrementKg, de.repMax, de.supersetGroup, de.autoWarmup, e.muscle
            FROM day_exercises de JOIN exercises e ON e.id = de.exerciseId
            WHERE de.dayId = :dayId ORDER BY de.position"""
     )
@@ -117,6 +127,9 @@ interface ProgramDao {
 
     @Query("SELECT * FROM day_exercises WHERE dayId = :dayId ORDER BY position")
     suspend fun getDayExercises(dayId: Long): List<DayExercise>
+
+    @Query("SELECT dayId FROM day_exercises WHERE id = :id")
+    suspend fun getDayExerciseDayId(id: Long): Long?
 
     @Query("SELECT COALESCE(MAX(position), -1) + 1 FROM day_exercises WHERE dayId = :dayId")
     suspend fun nextExercisePosition(dayId: Long): Int
@@ -148,10 +161,10 @@ interface SessionDao {
     @Query(
         """SELECT s.id, s.name, s.programDayId, s.startedAt, s.endedAt,
                   (SELECT COUNT(*) FROM set_logs l JOIN session_exercises se ON se.id = l.sessionExerciseId
-                     WHERE se.sessionId = s.id AND l.completed = 1) AS setCount,
+                     WHERE se.sessionId = s.id AND l.completed = 1 AND l.setType != 'WARMUP') AS setCount,
                   (SELECT COALESCE(SUM(l.weightKg * l.reps), 0) FROM set_logs l
                      JOIN session_exercises se ON se.id = l.sessionExerciseId
-                     WHERE se.sessionId = s.id AND l.completed = 1) AS volumeKg
+                     WHERE se.sessionId = s.id AND l.completed = 1 AND l.setType != 'WARMUP') AS volumeKg
            FROM sessions s WHERE s.endedAt IS NOT NULL ORDER BY s.startedAt DESC"""
     )
     fun observeFinishedSummaries(): Flow<List<SessionSummary>>
@@ -168,7 +181,7 @@ interface SessionDao {
     // Session exercises
     @Query(
         """SELECT se.id, se.sessionId, se.exerciseId, e.name AS exerciseName, se.position,
-                  se.restSeconds, se.targetReps
+                  se.restSeconds, se.targetReps, se.supersetGroup, se.note, se.repMax
            FROM session_exercises se JOIN exercises e ON e.id = se.exerciseId
            WHERE se.sessionId = :sessionId ORDER BY se.position"""
     )
@@ -247,7 +260,7 @@ interface HistoryDao {
            FROM set_logs l
            JOIN session_exercises se ON se.id = l.sessionExerciseId
            JOIN sessions s ON s.id = se.sessionId
-           WHERE se.exerciseId = :exerciseId AND l.completed = 1 AND s.endedAt IS NOT NULL
+           WHERE se.exerciseId = :exerciseId AND l.completed = 1 AND l.setType != 'WARMUP' AND s.endedAt IS NOT NULL
            ORDER BY s.startedAt, se.position, l.setNumber"""
     )
     fun observeExerciseSets(exerciseId: Long): Flow<List<ExerciseSetRow>>
@@ -258,15 +271,45 @@ interface HistoryDao {
            FROM set_logs l
            JOIN session_exercises se ON se.id = l.sessionExerciseId
            JOIN sessions s ON s.id = se.sessionId
-           WHERE se.exerciseId = :exerciseId AND l.completed = 1 AND s.id = (
+           WHERE se.exerciseId = :exerciseId AND l.completed = 1 AND l.setType != 'WARMUP' AND s.id = (
                SELECT s2.id FROM sessions s2
                JOIN session_exercises se2 ON se2.sessionId = s2.id
                JOIN set_logs l2 ON l2.sessionExerciseId = se2.id
-               WHERE se2.exerciseId = :exerciseId AND l2.completed = 1 AND s2.endedAt IS NOT NULL
+               WHERE se2.exerciseId = :exerciseId AND l2.completed = 1 AND l2.setType != 'WARMUP'
+                 AND s2.endedAt IS NOT NULL
                ORDER BY s2.startedAt DESC LIMIT 1)
            ORDER BY se.position, l.setNumber"""
     )
     suspend fun lastSessionSets(exerciseId: Long): List<ExerciseSetRow>
+
+    /** Working sets from the [sessions] most recent finished workouts containing this exercise (newest first). */
+    @Query(
+        """SELECT s.id AS sessionId, s.name AS sessionName, s.startedAt, l.setNumber, l.weightKg, l.reps
+           FROM set_logs l
+           JOIN session_exercises se ON se.id = l.sessionExerciseId
+           JOIN sessions s ON s.id = se.sessionId
+           WHERE se.exerciseId = :exerciseId AND l.completed = 1 AND l.setType != 'WARMUP' AND s.id IN (
+               SELECT s2.id FROM sessions s2
+               JOIN session_exercises se2 ON se2.sessionId = s2.id
+               JOIN set_logs l2 ON l2.sessionExerciseId = se2.id
+               WHERE se2.exerciseId = :exerciseId AND l2.completed = 1 AND l2.setType != 'WARMUP'
+                 AND s2.endedAt IS NOT NULL
+               GROUP BY s2.id ORDER BY s2.startedAt DESC LIMIT :sessions)
+           ORDER BY s.startedAt DESC, se.position, l.setNumber"""
+    )
+    suspend fun recentSessionSets(exerciseId: Long, sessions: Int): List<ExerciseSetRow>
+
+    /** Completed working sets per primary muscle since [since], including a workout in progress. */
+    @Query(
+        """SELECT e.muscle AS muscle, COUNT(*) AS sets
+           FROM set_logs l
+           JOIN session_exercises se ON se.id = l.sessionExerciseId
+           JOIN sessions s ON s.id = se.sessionId
+           JOIN exercises e ON e.id = se.exerciseId
+           WHERE l.completed = 1 AND l.setType != 'WARMUP' AND s.startedAt >= :since
+           GROUP BY e.muscle"""
+    )
+    fun observeMuscleSets(since: Long): Flow<List<MuscleSets>>
 
     @Query(
         """SELECT e.id, e.name, MAX(s.startedAt) AS lastPerformed, COUNT(DISTINCT s.id) AS sessionCount
@@ -274,7 +317,7 @@ interface HistoryDao {
            JOIN session_exercises se ON se.exerciseId = e.id
            JOIN sessions s ON s.id = se.sessionId
            JOIN set_logs l ON l.sessionExerciseId = se.id
-           WHERE l.completed = 1 AND s.endedAt IS NOT NULL
+           WHERE l.completed = 1 AND l.setType != 'WARMUP' AND s.endedAt IS NOT NULL
            GROUP BY e.id ORDER BY lastPerformed DESC"""
     )
     fun observeExercisesWithHistory(): Flow<List<ExerciseHistorySummary>>
@@ -290,6 +333,7 @@ interface BackupDao {
     @Query("SELECT * FROM sessions") suspend fun sessions(): List<WorkoutSession>
     @Query("SELECT * FROM session_exercises") suspend fun sessionExercises(): List<SessionExercise>
     @Query("SELECT * FROM set_logs") suspend fun setLogs(): List<SetLog>
+    @Query("SELECT * FROM body_metrics") suspend fun bodyEntries(): List<BodyEntry>
 
     @Insert suspend fun insertExercises(items: List<Exercise>)
     @Insert suspend fun insertPrograms(items: List<Program>)
@@ -298,6 +342,7 @@ interface BackupDao {
     @Insert suspend fun insertSessions(items: List<WorkoutSession>)
     @Insert suspend fun insertSessionExercises(items: List<SessionExercise>)
     @Insert suspend fun insertSetLogs(items: List<SetLog>)
+    @Insert suspend fun insertBodyEntries(items: List<BodyEntry>)
 
     @Query("DELETE FROM set_logs") suspend fun clearSetLogs()
     @Query("DELETE FROM session_exercises") suspend fun clearSessionExercises()
@@ -306,10 +351,11 @@ interface BackupDao {
     @Query("DELETE FROM program_days") suspend fun clearProgramDays()
     @Query("DELETE FROM programs") suspend fun clearPrograms()
     @Query("DELETE FROM exercises") suspend fun clearExercises()
+    @Query("DELETE FROM body_metrics") suspend fun clearBodyEntries()
 
     @Query(
         """SELECT s.startedAt, s.name AS sessionName, e.name AS exerciseName, l.setNumber,
-                  l.weightKg, l.reps, l.restBeforeSeconds
+                  l.weightKg, l.reps, l.restBeforeSeconds, l.setType, l.rpe
            FROM set_logs l
            JOIN session_exercises se ON se.id = l.sessionExerciseId
            JOIN sessions s ON s.id = se.sessionId
@@ -328,4 +374,21 @@ data class CsvRow(
     val weightKg: Double,
     val reps: Int,
     val restBeforeSeconds: Int?,
+    val setType: SetType,
+    val rpe: Double?,
 )
+
+@Dao
+interface BodyDao {
+    @Query("SELECT * FROM body_metrics WHERE metric = :metric ORDER BY recordedAt")
+    fun observe(metric: BodyMetric): Flow<List<BodyEntry>>
+
+    @Query("SELECT * FROM body_metrics ORDER BY recordedAt DESC")
+    fun observeAll(): Flow<List<BodyEntry>>
+
+    @Insert
+    suspend fun insert(entry: BodyEntry): Long
+
+    @Query("DELETE FROM body_metrics WHERE id = :id")
+    suspend fun delete(id: Long)
+}

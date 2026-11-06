@@ -28,8 +28,11 @@ class BackupTest {
         repo.completeSet(sets[0].id, 60.0, 6)
         clock.advanceSeconds(120)
         repo.completeSet(sets[1].id, 62.5, 6)
+        repo.setSetType(sets[0].id, com.codyphil.liftlog.data.SetType.WARMUP)
+        repo.setSetRpe(sets[1].id, 8.5)
         repo.finishSession(s)
         repo.updateSessionNotes(s, "Felt strong, \"PR\" day")
+        repo.addBodyEntry(com.codyphil.liftlog.data.BodyMetric.BODY_WEIGHT, 82.5, 1234)
 
         val json = BackupManager(src, clock.fn).exportJson()
 
@@ -39,6 +42,10 @@ class BackupTest {
         val result = BackupManager(dst, clock.fn).importJson(json)
         assertEquals(1, result.programs)
         assertEquals(1, result.workouts)
+        assertEquals(82.5, dstRepo.observeBody(com.codyphil.liftlog.data.BodyMetric.BODY_WEIGHT).first().single().value, 1e-9)
+        val restoredSets = dstRepo.observeSessionDetail(s).first()!!.exercises.first().sets
+        assertEquals(com.codyphil.liftlog.data.SetType.WARMUP, restoredSets[0].setType)
+        assertEquals(8.5, restoredSets[1].rpe!!, 1e-9)
 
         val reExport = BackupManager(dst, clock.fn).exportJson()
         assertEquals(stripTimestamp(json), stripTimestamp(reExport))
@@ -76,9 +83,29 @@ class BackupTest {
         repo.finishSession(s)
         val lines = BackupManager(db, clock.fn).exportCsv(WeightUnit.LB).trim().lines()
         assertEquals(3, lines.size)
-        assertTrue(lines[0].startsWith("date,workout,exercise,set,weight_lb"))
-        assertTrue(lines[1], lines[1].contains(",Bench Press,1,225,5,"))
-        assertTrue(lines[2], lines[2].contains(",\"Curl, Barbell\",1,44.09,10,"))
+        assertTrue(lines[0].startsWith("date,workout,exercise,set,set_type,weight_lb,reps,rpe"))
+        assertTrue(lines[1], lines[1].contains(",Bench Press,1,normal,225,5,,"))
+        assertTrue(lines[2], lines[2].contains(",\"Curl, Barbell\",1,normal,44.09,10,,"))
+        db.close()
+    }
+
+    @Test fun version1BackupFile_stillRestores() = runTest {
+        val v1 = """
+            {"format":"liftlog-backup","version":1,"exportedAt":1,
+             "exercises":[{"id":1,"name":"Back Squat"}],
+             "programs":[{"id":1,"name":"Old","notes":"","createdAt":1}],
+             "programDays":[{"id":1,"programId":1,"name":"A","position":0}],
+             "dayExercises":[{"id":1,"dayId":1,"exerciseId":1,"position":0,"targetSets":3,"targetReps":5,"targetWeightKg":100.0,"restSeconds":180}],
+             "sessions":[{"id":1,"name":"W","programDayId":1,"startedAt":10,"endedAt":20,"notes":""}],
+             "sessionExercises":[{"id":1,"sessionId":1,"exerciseId":1,"position":0,"restSeconds":180,"targetReps":5}],
+             "setLogs":[{"id":1,"sessionExerciseId":1,"setNumber":1,"weightKg":100.0,"reps":5,"completed":true,"completedAt":15,"restBeforeSeconds":null}]}
+        """.trimIndent()
+        val db = inMemoryDb()
+        val r = BackupManager(db, clock.fn).importJson(v1)
+        assertEquals(1, r.workouts)
+        val repo = WorkoutRepository(db, clock.fn)
+        assertEquals(com.codyphil.liftlog.data.SetType.NORMAL, repo.observeSessionDetail(1).first()!!.exercises.single().sets.single().setType)
+        assertEquals(com.codyphil.liftlog.data.Progression.NONE, repo.observeDayExercises(1).first().single().progression)
         db.close()
     }
 

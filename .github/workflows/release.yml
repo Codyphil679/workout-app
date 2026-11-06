@@ -57,7 +57,7 @@ jobs:
           fi
 
       - name: Run tests
-        run: ./gradlew :app:testDebugUnitTest --tests '*RepositoryTest' --tests '*BackupTest' --tests '*UnitsAndStatsTest'
+        run: ./gradlew :app:testDebugUnitTest --tests '*RepositoryTest' --tests '*BackupTest' --tests '*UnitsAndStatsTest' --tests '*ProgressionTest' --tests '*MigrationTest'
 
       - name: Build APK
         env:

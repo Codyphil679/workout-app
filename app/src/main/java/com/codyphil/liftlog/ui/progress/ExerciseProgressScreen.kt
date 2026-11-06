@@ -1,6 +1,13 @@
 package com.codyphil.liftlog.ui.progress
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import com.codyphil.liftlog.data.Muscle
+import com.codyphil.liftlog.ui.components.Pill
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -56,7 +63,7 @@ import kotlin.math.roundToLong
 
 enum class Metric(val label: String) { E1RM("Est. 1RM"), TOP("Top weight"), VOLUME("Volume") }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun ExerciseProgressScreen(exerciseId: Long, onBack: () -> Unit, onOpenSession: (Long) -> Unit) {
     val container = appContainer()
@@ -68,6 +75,7 @@ fun ExerciseProgressScreen(exerciseId: Long, onBack: () -> Unit, onOpenSession: 
     val rows by repo.observeExerciseHistory(exerciseId).collectAsStateWithLifecycle(emptyList())
     var metric by rememberSaveable { mutableStateOf(Metric.E1RM) }
     var renaming by remember { mutableStateOf(false) }
+    var pickingMuscle by remember { mutableStateOf(false) }
     val unit = settings.unit
     val points = remember(rows) { ExerciseAnalytics.perSession(rows) }
     val prs = remember(rows) { ExerciseAnalytics.records(rows) }
@@ -91,6 +99,11 @@ fun ExerciseProgressScreen(exerciseId: Long, onBack: () -> Unit, onOpenSession: 
             item {
                 Eyebrow("Exercise", color = Brand.Volt)
                 Text(exercise?.name ?: "", style = MaterialTheme.typography.headlineLarge)
+                Spacer(Modifier.height(6.dp))
+                Pill(
+                    "Muscle: ${exercise?.muscle?.label ?: "–"}  ✎", color = Brand.Ice,
+                    modifier = Modifier.clickable { pickingMuscle = true },
+                )
             }
             if (points.isEmpty()) {
                 item { Text("No finished workouts with this exercise yet.", color = Brand.TextMid) }
@@ -174,6 +187,24 @@ fun ExerciseProgressScreen(exerciseId: Long, onBack: () -> Unit, onOpenSession: 
         }
     }
 
+    if (pickingMuscle) {
+        AlertDialog(
+            onDismissRequest = { pickingMuscle = false },
+            title = { Text("Main muscle worked") },
+            text = {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Muscle.entries.forEach { m ->
+                        Pill(m.label, color = if (m == exercise?.muscle) Brand.Volt else Brand.TextMid,
+                            modifier = Modifier.clickable {
+                                pickingMuscle = false
+                                scope.launch { repo.setExerciseMuscle(exerciseId, m) }
+                            })
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { pickingMuscle = false }) { Text("Cancel") } },
+        )
+    }
     if (renaming) {
         TextPromptDialog(title = "Rename exercise", initial = exercise?.name.orEmpty(), onDismiss = { renaming = false }) { name ->
             renaming = false

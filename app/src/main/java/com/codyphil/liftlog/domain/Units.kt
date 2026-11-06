@@ -34,6 +34,11 @@ object Units {
     fun formatVolume(kg: Double, unit: WeightUnit): String =
         "%,d %s".format(fromKg(kg, unit).roundToLong(), unit.label)
 
+    /** Body measurements: stored in cm, shown in inches for lb users. */
+    fun lengthLabel(unit: WeightUnit) = if (unit == WeightUnit.LB) "in" else "cm"
+    fun lengthFromCm(cm: Double, unit: WeightUnit) = if (unit == WeightUnit.LB) cm / 2.54 else cm
+    fun lengthToCm(v: Double, unit: WeightUnit) = if (unit == WeightUnit.LB) v * 2.54 else v
+
     /** Parses user input like "225", "102.5" or "102,5". Returns null when not a valid non-negative number. */
     fun parse(text: String): Double? {
         val v = text.trim().replace(',', '.').toDoubleOrNull() ?: return null

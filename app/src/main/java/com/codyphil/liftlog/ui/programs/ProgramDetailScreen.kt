@@ -58,7 +58,8 @@ import kotlinx.coroutines.launch
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProgramDetailScreen(programId: Long, onBack: () -> Unit, onOpenDay: (Long) -> Unit, onStartWorkout: () -> Unit) {
-    val repo = appContainer().repository
+    val container = appContainer()
+    val repo = container.repository
     val scope = rememberCoroutineScope()
     val program by repo.observeProgram(programId).collectAsStateWithLifecycle(null)
     val days by repo.observeDays(programId).collectAsStateWithLifecycle(emptyList())
@@ -118,7 +119,7 @@ fun ProgramDetailScreen(programId: Long, onBack: () -> Unit, onOpenDay: (Long) -
                     isLast = index == days.lastIndex,
                     canStart = active == null && day.exerciseCount > 0,
                     onOpen = { onOpenDay(day.id) },
-                    onStart = { scope.launch { repo.startFromDay(day.id); onStartWorkout() } },
+                    onStart = { scope.launch { container.startFromDay(day.id); onStartWorkout() } },
                     onMove = { delta -> scope.launch { repo.moveDay(day.id, delta) } },
                     onRename = { name -> scope.launch { repo.renameDay(day.id, name) } },
                     onDelete = { scope.launch { repo.deleteDay(day.id) } },

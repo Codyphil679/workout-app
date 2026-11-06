@@ -12,6 +12,12 @@ data class DayExerciseWithName(
     val targetReps: Int,
     val targetWeightKg: Double,
     val restSeconds: Int,
+    val progression: Progression,
+    val incrementKg: Double,
+    val repMax: Int?,
+    val supersetGroup: Int?,
+    val autoWarmup: Boolean,
+    val muscle: Muscle,
 )
 
 data class DaySummary(
@@ -47,6 +53,9 @@ data class SessionExerciseRow(
     val position: Int,
     val restSeconds: Int,
     val targetReps: Int?,
+    val supersetGroup: Int?,
+    val note: String?,
+    val repMax: Int?,
 )
 
 data class ExerciseSetRow(
@@ -84,3 +93,5 @@ data class DayWithProgram(
     val position: Int,
     val exerciseCount: Int,
 )
+
+data class MuscleSets(val muscle: Muscle, val sets: Int)

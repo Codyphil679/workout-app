@@ -22,7 +22,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
@@ -55,6 +56,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -68,7 +70,13 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import android.widget.Toast
+import com.codyphil.liftlog.data.SetType
+import com.codyphil.liftlog.ui.components.PlateCalculatorDialog
+import com.codyphil.liftlog.ui.components.RpeDialog
+import kotlinx.coroutines.launch
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.codyphil.liftlog.data.ExerciseSetRow
 import com.codyphil.liftlog.data.SessionExerciseWithSets
@@ -107,6 +115,9 @@ fun ActiveWorkoutScreen(onBack: () -> Unit, onFinished: (Long) -> Unit, onOpenEx
     var renaming by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
     var finishing by remember { mutableStateOf(false) }
+    var plateFor by remember { mutableStateOf<Double?>(null) }
+    val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
 
     val s = state
     LaunchedEffect(s) {
@@ -118,6 +129,8 @@ fun ActiveWorkoutScreen(onBack: () -> Unit, onFinished: (Long) -> Unit, onOpenEx
     }
     val detail = s.detail
     val session = detail.session
+    val supersetLetters = detail.exercises.mapNotNull { it.row.supersetGroup }.distinct()
+        .mapIndexed { i, g -> g to ('A' + i).toString() }.toMap()
     val doneSets = detail.exercises.sumOf { e -> e.sets.count { it.completed } }
     val totalSets = detail.exercises.sumOf { it.sets.size }
 
@@ -156,30 +169,52 @@ fun ActiveWorkoutScreen(onBack: () -> Unit, onFinished: (Long) -> Unit, onOpenEx
         Box(Modifier.padding(padding).fillMaxSize()) {
             LazyColumn(
                 Modifier.fillMaxSize().imePadding(),
+                state = listState,
                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 180.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                items(detail.exercises, key = { it.row.id }) { ex ->
+                itemsIndexed(detail.exercises, key = { _, it -> it.row.id }) { index, ex ->
+                    val members = ex.row.supersetGroup?.let { g -> detail.exercises.filter { it.row.supersetGroup == g } }
                     ExerciseCard(
                         ex = ex,
                         unit = settings.unit,
+                        trackRpe = settings.trackRpe,
+                        supersetLabel = ex.row.supersetGroup?.let { supersetLetters[it] },
+                        canLinkNext = index < detail.exercises.lastIndex,
                         lastTime = lastTime[ex.row.exerciseId].orEmpty(),
-                        isFirst = ex == detail.exercises.first(),
-                        isLast = ex == detail.exercises.last(),
+                        isFirst = index == 0,
+                        isLast = index == detail.exercises.lastIndex,
                         onOpenHistory = { onOpenExercise(ex.row.exerciseId) },
                         onMove = { delta -> vm.launch { vm.repo.moveSessionExercise(ex.row.id, delta) } },
                         onRemove = { vm.launch { vm.repo.removeSessionExercise(ex.row.id) } },
                         onSetRest = { secs -> vm.launch { vm.repo.setSessionExerciseRest(ex.row.id, secs) } },
+                        onSuperset = { link -> vm.launch { vm.repo.setSessionSuperset(ex.row.id, link) } },
                         onAddSet = { vm.launch { vm.repo.addSet(ex.row.id) } },
+                        onWarmups = {
+                            vm.launch {
+                                if (!vm.repo.addWarmupSets(ex.row.id, settings.unit, settings.bar)) {
+                                    Toast.makeText(context, "Enter a working weight heavier than the bar first", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        },
+                        onPlates = { plateFor = it },
                         onDeleteSet = { id -> vm.launch { vm.repo.deleteSet(id) } },
+                        onSetType = { id, type -> vm.launch { vm.repo.setSetType(id, type) } },
+                        onRpe = { id, rpe -> vm.launch { vm.repo.setSetRpe(id, rpe) } },
                         onEditSet = { id, w, r -> vm.launch { vm.repo.updateSetValues(id, w, r) } },
                         onToggleSet = { set, w, r ->
                             vm.launch {
                                 if (set.completed) vm.repo.uncompleteSet(set.id)
                                 else {
                                     val restSecs = vm.repo.completeSet(set.id, w, r)
-                                    if (restSecs != null && settings.autoStartRest) {
-                                        RestTimer.start(context, restSecs, nextUpLabel(detail.exercises, ex, set))
+                                    val flow = SupersetFlow.afterSet(detail.exercises, ex, set, members)
+                                    if (flow.goTo != null) {
+                                        val target = detail.exercises.indexOfFirst { it.row.id == flow.goTo.row.id }
+                                        if (target >= 0) scope.launch { listState.animateScrollToItem(target) }
+                                    }
+                                    if (flow.rest && restSecs != null && settings.autoStartRest) {
+                                        val secs = if (set.setType == SetType.WARMUP) minOf(restSecs, 60) else restSecs
+                                        RestTimer.start(context, secs, flow.label)
                                     }
                                 }
                             }
@@ -226,6 +261,9 @@ fun ActiveWorkoutScreen(onBack: () -> Unit, onFinished: (Long) -> Unit, onOpenEx
             },
             onDelete = { ex -> vm.launch { vm.repo.deleteExerciseIfUnused(ex.id) } },
         )
+    }
+    plateFor?.let { w ->
+        PlateCalculatorDialog(w, settings.bar, settings.unit, onDismiss = { plateFor = null })
     }
     if (renaming) {
         TextPromptDialog(
@@ -294,19 +332,52 @@ private fun ElapsedText(startedAt: Long, done: Int, total: Int) {
     )
 }
 
-private fun nextUpLabel(all: List<SessionExerciseWithSets>, current: SessionExerciseWithSets, justDone: SetLog): String {
-    val nextInSame = current.sets.firstOrNull { !it.completed && it.id != justDone.id }
-    if (nextInSame != null) return "Next: ${current.row.exerciseName} · set ${nextInSame.setNumber}"
-    val idx = all.indexOf(current)
-    val nextEx = all.drop(idx + 1).firstOrNull { e -> e.sets.any { !it.completed } }
-        ?: all.firstOrNull { e -> e != current && e.sets.any { !it.completed } }
-    return if (nextEx != null) "Next: ${nextEx.row.exerciseName}" else "Last set done. Finish when ready."
+/** Decides what happens after a set is checked off: rest now, or move straight to the next exercise of a superset. */
+internal object SupersetFlow {
+    data class Result(val rest: Boolean, val goTo: SessionExerciseWithSets?, val label: String)
+
+    fun afterSet(
+        all: List<SessionExerciseWithSets>,
+        current: SessionExerciseWithSets,
+        justDone: SetLog,
+        members: List<SessionExerciseWithSets>?,
+    ): Result {
+        fun hasWork(e: SessionExerciseWithSets) = e.sets.any { !it.completed && it.id != justDone.id }
+        if (members != null && members.size > 1 && justDone.setType != SetType.WARMUP) {
+            val idx = members.indexOfFirst { it.row.id == current.row.id }
+            val nextInRound = members.drop(idx + 1).firstOrNull(::hasWork)
+            if (nextInRound != null) {
+                return Result(rest = false, goTo = nextInRound, label = "Superset: ${nextInRound.row.exerciseName}")
+            }
+            val roundStart = members.firstOrNull(::hasWork)
+            if (roundStart != null) {
+                return Result(rest = true, goTo = roundStart, label = "Next round: ${roundStart.row.exerciseName}")
+            }
+        }
+        val nextInSame = current.sets.firstOrNull { !it.completed && it.id != justDone.id }
+        if (nextInSame != null) {
+            return Result(true, null, "Next: ${current.row.exerciseName} · ${setLabel(current.sets, nextInSame)}")
+        }
+        val idx = all.indexOfFirst { it.row.id == current.row.id }
+        val nextEx = all.drop(idx + 1).firstOrNull(::hasWork) ?: all.firstOrNull { it.row.id != current.row.id && hasWork(it) }
+        return if (nextEx != null) Result(true, nextEx, "Next: ${nextEx.row.exerciseName}")
+        else Result(true, null, "Last set done. Finish when ready.")
+    }
+}
+
+/** "Warm-up", "set 3", "drop set"… */
+internal fun setLabel(sets: List<SetLog>, set: SetLog): String = when (set.setType) {
+    SetType.WARMUP -> "warm-up"
+    else -> "set ${sets.filter { it.setType != SetType.WARMUP }.indexOfFirst { it.id == set.id } + 1}"
 }
 
 @Composable
 private fun ExerciseCard(
     ex: SessionExerciseWithSets,
     unit: WeightUnit,
+    trackRpe: Boolean,
+    supersetLabel: String?,
+    canLinkNext: Boolean,
     lastTime: List<ExerciseSetRow>,
     isFirst: Boolean,
     isLast: Boolean,
@@ -314,8 +385,13 @@ private fun ExerciseCard(
     onMove: (Int) -> Unit,
     onRemove: () -> Unit,
     onSetRest: (Int) -> Unit,
+    onSuperset: (Boolean) -> Unit,
     onAddSet: () -> Unit,
+    onWarmups: () -> Unit,
+    onPlates: (Double) -> Unit,
     onDeleteSet: (Long) -> Unit,
+    onSetType: (Long, SetType) -> Unit,
+    onRpe: (Long, Double?) -> Unit,
     onEditSet: (Long, Double, Int) -> Unit,
     onToggleSet: (SetLog, Double, Int) -> Unit,
 ) {
@@ -323,10 +399,15 @@ private fun ExerciseCard(
     var editRest by remember { mutableStateOf(false) }
     var confirmRemove by remember { mutableStateOf(false) }
     val allDone = ex.sets.isNotEmpty() && ex.sets.all { it.completed }
+    val working = ex.sets.filter { it.setType != SetType.WARMUP }
 
-    Panel(contentPadding = PaddingValues(start = 16.dp, end = 8.dp, top = 12.dp, bottom = 8.dp)) {
+    Panel(
+        contentPadding = PaddingValues(start = 16.dp, end = 8.dp, top = 12.dp, bottom = 8.dp),
+        borderColor = if (supersetLabel != null) Brand.Ice.copy(alpha = 0.55f) else Brand.Line.copy(alpha = 0.6f),
+    ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
+                if (supersetLabel != null) Eyebrow("Superset $supersetLabel", color = Brand.Ice)
                 Text(
                     ex.row.exerciseName,
                     style = MaterialTheme.typography.titleLarge,
@@ -335,7 +416,8 @@ private fun ExerciseCard(
                 Spacer(Modifier.height(4.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                     Pill("⏱ ${Format.duration(ex.row.restSeconds.toLong())}", color = Brand.Ice, modifier = Modifier.clickable { editRest = true })
-                    ex.row.targetReps?.let { Pill("Goal ${it} reps", color = Brand.TextMid) }
+                    val goal = ex.row.targetReps?.let { min -> ex.row.repMax?.takeIf { it > min }?.let { "$min–$it" } ?: "$min" }
+                    goal?.let { Pill("Goal $it reps", color = Brand.TextMid) }
                 }
             }
             IconButton(onClick = onOpenHistory) { Icon(Icons.Rounded.History, "History", tint = Brand.TextMid) }
@@ -344,6 +426,13 @@ private fun ExerciseCard(
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                     DropdownMenuItem(text = { Text("Rest time") }, leadingIcon = { Icon(Icons.Rounded.Timer, null) },
                         onClick = { menu = false; editRest = true })
+                    DropdownMenuItem(text = { Text("Add warm-up sets") }, onClick = { menu = false; onWarmups() })
+                    if (supersetLabel != null) {
+                        DropdownMenuItem(text = { Text("Remove from superset") }, onClick = { menu = false; onSuperset(false) })
+                    }
+                    if (canLinkNext) {
+                        DropdownMenuItem(text = { Text("Superset with next exercise") }, onClick = { menu = false; onSuperset(true) })
+                    }
                     if (!isFirst) DropdownMenuItem(text = { Text("Move up") }, onClick = { menu = false; onMove(-1) })
                     if (!isLast) DropdownMenuItem(text = { Text("Move down") }, onClick = { menu = false; onMove(1) })
                     DropdownMenuItem(text = { Text("Remove exercise", color = Brand.Danger) }, onClick = { menu = false; confirmRemove = true })
@@ -351,6 +440,14 @@ private fun ExerciseCard(
             }
         }
 
+        ex.row.note?.let { note ->
+            Text(
+                note,
+                style = MaterialTheme.typography.labelMedium,
+                color = if (note.startsWith("+")) Brand.Volt else if (note.startsWith("Deload")) Brand.Ember else Brand.TextMid,
+                modifier = Modifier.padding(top = 6.dp, end = 8.dp),
+            )
+        }
         if (lastTime.isNotEmpty()) {
             Text(
                 "Last time (${Format.dateShort(lastTime.first().startedAt)}): " +
@@ -359,27 +456,47 @@ private fun ExerciseCard(
                 color = Brand.TextLow,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(top = 6.dp, end = 8.dp),
+                modifier = Modifier.padding(top = 4.dp, end = 8.dp),
             )
         }
 
         Spacer(Modifier.height(10.dp))
+        val widths = cellWidths(trackRpe)
         Row(Modifier.padding(end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Eyebrow("Set", modifier = Modifier.width(40.dp))
             Eyebrow("Prev", modifier = Modifier.weight(1f))
-            Eyebrow(unit.label, modifier = Modifier.width(80.dp).padding(start = 4.dp))
-            Spacer(Modifier.width(8.dp))
-            Eyebrow("Reps", modifier = Modifier.width(60.dp).padding(start = 4.dp))
-            Spacer(Modifier.width(52.dp))
+            Eyebrow(unit.label, modifier = Modifier.width(widths.weight).padding(start = 4.dp))
+            Spacer(Modifier.width(6.dp))
+            Eyebrow("Reps", modifier = Modifier.width(widths.reps).padding(start = 4.dp))
+            if (trackRpe) {
+                Spacer(Modifier.width(6.dp))
+                Eyebrow("RPE", modifier = Modifier.width(widths.rpe).padding(start = 4.dp))
+            }
+            Spacer(Modifier.width(50.dp))
         }
         ex.sets.forEach { set ->
-            val prev = lastTime.getOrNull(set.setNumber - 1)
-            SetRow(set, prev, unit, onDelete = { onDeleteSet(set.id) }, onEdit = onEditSet, onToggle = onToggleSet)
+            val workingIndex = working.indexOfFirst { it.id == set.id }
+            val prev = if (workingIndex >= 0) lastTime.getOrNull(workingIndex) else null
+            SetRow(
+                set, if (workingIndex >= 0) workingIndex + 1 else 0, prev, unit, trackRpe, widths,
+                onDelete = { onDeleteSet(set.id) },
+                onSetType = { onSetType(set.id, it) },
+                onRpe = { onRpe(set.id, it) },
+                onEdit = onEditSet, onToggle = onToggleSet,
+            )
         }
-        TextButton(onClick = onAddSet) {
-            Icon(Icons.Rounded.Add, null, Modifier.size(18.dp))
-            Spacer(Modifier.width(4.dp))
-            Text("Add set")
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = onAddSet) {
+                Icon(Icons.Rounded.Add, null, Modifier.size(18.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("Add set")
+            }
+            Spacer(Modifier.weight(1f))
+            TextButton(onClick = onWarmups) { Text("Warm-up", color = Brand.TextMid) }
+            TextButton(onClick = {
+                val next = working.firstOrNull { !it.completed } ?: working.lastOrNull()
+                onPlates(next?.weightKg?.let { Units.fromKg(it, unit) } ?: 0.0)
+            }) { Text("Plates", color = Brand.TextMid) }
         }
     }
 
@@ -397,23 +514,40 @@ private fun ExerciseCard(
     }
 }
 
+private data class CellWidths(val weight: Dp, val reps: Dp, val rpe: Dp)
+private fun cellWidths(trackRpe: Boolean) =
+    if (trackRpe) CellWidths(68.dp, 50.dp, 46.dp) else CellWidths(80.dp, 60.dp, 0.dp)
+
 @Composable
 private fun SetRow(
     set: SetLog,
+    workingNumber: Int,
     prev: ExerciseSetRow?,
     unit: WeightUnit,
+    trackRpe: Boolean,
+    widths: CellWidths,
     onDelete: () -> Unit,
+    onSetType: (SetType) -> Unit,
+    onRpe: (Double?) -> Unit,
     onEdit: (Long, Double, Int) -> Unit,
     onToggle: (SetLog, Double, Int) -> Unit,
 ) {
     var weight by remember(set.id, unit) { mutableStateOf(if (set.weightKg == 0.0) "" else Units.format(set.weightKg, unit)) }
     var reps by remember(set.id) { mutableStateOf(if (set.reps == 0) "" else set.reps.toString()) }
     var menu by remember { mutableStateOf(false) }
+    var rpeDialog by remember { mutableStateOf(false) }
     val focus = LocalFocusManager.current
     val bg by animateColorAsState(if (set.completed) Brand.Volt.copy(alpha = 0.10f) else Color.Transparent, label = "rowBg")
 
     fun weightKg() = Units.toKg(Units.parse(weight) ?: 0.0, unit)
     fun repsInt() = reps.toIntOrNull() ?: 0
+
+    val (marker, markerColor) = when (set.setType) {
+        SetType.WARMUP -> "W" to Brand.Ember
+        SetType.FAILURE -> "F" to Brand.Danger
+        SetType.DROP -> "D" to Brand.Ice
+        SetType.NORMAL -> workingNumber.toString() to (if (set.completed) Brand.Volt else Brand.TextMid)
+    }
 
     Row(
         Modifier.fillMaxWidth().padding(end = 8.dp, top = 3.dp, bottom = 3.dp)
@@ -422,13 +556,20 @@ private fun SetRow(
     ) {
         Box(Modifier.width(40.dp)) {
             Text(
-                set.setNumber.toString(),
+                marker,
                 style = MaterialTheme.typography.titleMedium.merge(Numeric),
-                color = if (set.completed) Brand.Volt else Brand.TextMid,
+                color = markerColor,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth().clickable { menu = true }.padding(vertical = 10.dp),
             )
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                SetType.entries.forEach { t ->
+                    DropdownMenuItem(
+                        text = { Text(t.label, fontWeight = if (t == set.setType) FontWeight.Bold else FontWeight.Normal) },
+                        leadingIcon = { if (t == set.setType) Icon(Icons.Rounded.Check, null, tint = Brand.Volt) },
+                        onClick = { menu = false; onSetType(t) },
+                    )
+                }
                 DropdownMenuItem(text = { Text("Delete set", color = Brand.Danger) }, onClick = { menu = false; onDelete() })
             }
         }
@@ -445,11 +586,26 @@ private fun SetRow(
             maxLines = 1,
         )
         CellField(weight, { weight = it; onEdit(set.id, weightKg(), repsInt()) }, decimal = true, enabled = !set.completed,
-            placeholder = "0", modifier = Modifier.width(80.dp))
-        Spacer(Modifier.width(8.dp))
+            placeholder = "0", modifier = Modifier.width(widths.weight))
+        Spacer(Modifier.width(6.dp))
         CellField(reps, { reps = it; onEdit(set.id, weightKg(), repsInt()) }, decimal = false, enabled = !set.completed,
-            placeholder = "0", modifier = Modifier.width(60.dp))
-        Spacer(Modifier.width(8.dp))
+            placeholder = "0", modifier = Modifier.width(widths.reps))
+        if (trackRpe) {
+            Spacer(Modifier.width(6.dp))
+            Box(
+                Modifier.width(widths.rpe).height(44.dp).clip(RoundedCornerShape(12.dp))
+                    .background(if (set.rpe != null) Brand.Ember.copy(alpha = 0.14f) else Brand.PanelHigh)
+                    .clickable { rpeDialog = true },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    set.rpe?.let { Units.formatNumber(it) } ?: "–",
+                    style = MaterialTheme.typography.titleSmall.merge(Numeric),
+                    color = if (set.rpe != null) Brand.Ember else Brand.TextLow,
+                )
+            }
+        }
+        Spacer(Modifier.width(6.dp))
         val canComplete = set.completed || repsInt() > 0
         Box(
             Modifier.size(44.dp).clip(RoundedCornerShape(12.dp))
@@ -466,6 +622,9 @@ private fun SetRow(
                 },
             )
         }
+    }
+    if (rpeDialog) {
+        RpeDialog(set.rpe, onDismiss = { rpeDialog = false }, onPick = { rpeDialog = false; onRpe(it) })
     }
 }
 

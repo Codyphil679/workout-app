@@ -124,7 +124,7 @@ fun TrainScreen(onOpenWorkout: () -> Unit, onOpenPrograms: () -> Unit, onOpenSes
                         )
                         Spacer(Modifier.height(16.dp))
                         Button(
-                            onClick = { start { repo.startFromDay(upNext.id) } },
+                            onClick = { start { container.startFromDay(upNext.id) } },
                             enabled = upNext.exerciseCount > 0,
                             modifier = Modifier.fillMaxWidth().height(52.dp),
                         ) {
@@ -169,7 +169,7 @@ fun TrainScreen(onOpenWorkout: () -> Unit, onOpenPrograms: () -> Unit, onOpenSes
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     items(days, key = { it.id }) { day ->
                         DayCard(day, enabled = current == null && day.exerciseCount > 0) {
-                            start { repo.startFromDay(day.id) }
+                            start { container.startFromDay(day.id) }
                         }
                     }
                     item {

@@ -1,5 +1,6 @@
 package com.codyphil.liftlog.data
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
@@ -14,6 +15,8 @@ import androidx.room.PrimaryKey
 data class Exercise(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val name: String,
+    /** Primary muscle, used for weekly sets-per-muscle. */
+    @ColumnInfo(defaultValue = "OTHER") val muscle: Muscle = Muscle.OTHER,
 )
 
 @Entity(tableName = "programs")
@@ -55,6 +58,14 @@ data class DayExercise(
     val targetReps: Int,
     val targetWeightKg: Double,
     val restSeconds: Int,
+    @ColumnInfo(defaultValue = "NONE") val progression: Progression = Progression.NONE,
+    /** Weight added when progression succeeds. */
+    @ColumnInfo(defaultValue = "0") val incrementKg: Double = 0.0,
+    /** Top of the rep range for double progression (targetReps is the bottom). */
+    val repMax: Int? = null,
+    /** Exercises sharing a group number in the same day are done as a superset. */
+    val supersetGroup: Int? = null,
+    @ColumnInfo(defaultValue = "0") val autoWarmup: Boolean = false,
 )
 
 @Entity(
@@ -89,6 +100,11 @@ data class SessionExercise(
     val position: Int,
     val restSeconds: Int,
     val targetReps: Int? = null,
+    val supersetGroup: Int? = null,
+    /** Progression advice shown on the exercise card, e.g. "+5 lb: you hit every rep last time". */
+    val note: String? = null,
+    /** Top of the rep range when the exercise uses double progression. */
+    val repMax: Int? = null,
 )
 
 @Entity(
@@ -111,4 +127,16 @@ data class SetLog(
      * This includes the time spent performing this set, so it slightly overstates pure rest.
      */
     val restBeforeSeconds: Int? = null,
+    @ColumnInfo(defaultValue = "NORMAL") val setType: SetType = SetType.NORMAL,
+    /** Rate of perceived exertion, 6–10 in 0.5 steps. */
+    val rpe: Double? = null,
+)
+
+@Entity(tableName = "body_metrics", indices = [Index("recordedAt")])
+data class BodyEntry(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val metric: BodyMetric,
+    /** kg for weight, cm for lengths, % for body fat. */
+    val value: Double,
+    val recordedAt: Long,
 )

@@ -17,8 +17,14 @@ Kotlin · Jetpack Compose (Material 3) · Room · no account, no backend. All da
 
 **Program builder**
 - Programs → training days → exercises with target **sets × reps**, **starting weight**, and **rest time**
+- **Auto-progression** per exercise:
+  - *Linear*: hit every rep → add weight next time; miss two workouts in a row → drop 10%
+  - *Double*: work up a rep range (e.g. 8–12); when every set hits the top → add weight, back to the bottom
+  - Big barbell lifts default to linear (+5 lb upper / +10 lb lower), everything else to double progression
+- **Supersets**: link exercises; checking a set jumps you to the next exercise, rest starts after the round
+- **Automatic warm-up sets** (bar, ~40/60/80%) per exercise
+- **Program library** of six starter programs (Full Body A/B, 5×5 Strength, Upper/Lower, Push/Pull/Legs, Full Body Hypertrophy, Dumbbell Only)
 - Reorder days and exercises, rename, delete
-- Two starter templates (Full Body A/B, Push/Pull/Legs) you can add with one tap and edit
 - 34 common exercises preloaded, plus create your own from the picker (long-press one to delete it if it isn't used anywhere)
 
 **Workout logging**
@@ -26,6 +32,9 @@ Kotlin · Jetpack Compose (Material 3) · Room · no account, no backend. All da
 - Sets pre-fill with **what you lifted last time** for that set; the program's starting weight is only used the first time
 - Tap the "Prev" value to copy last time's set into the current one
 - Check off a set → **rest timer auto-starts** with that exercise's rest time
+- **Set types**: warm-up (W), failure (F), drop set (D). Warm-ups are kept out of history, records, volume and progression
+- **Optional RPE** (6–10) per set
+- **Plate calculator** (configurable bar weight) and one-tap warm-up sets in any workout
 - Add/remove sets and exercises mid-workout, change rest per exercise
 - Workouts survive the app being killed. Every keystroke is saved to the database
 
@@ -38,6 +47,8 @@ Kotlin · Jetpack Compose (Material 3) · Room · no account, no backend. All da
 - **History**: every finished workout grouped by month, with duration, sets, and volume. Open one to see each set's weight × reps and the time since the previous set
 - **Last time** shown inline on every exercise while you log
 - **Progress** per exercise: chart of estimated 1RM (Epley), top weight, or volume over time; personal records (heaviest set, best e1RM, best-volume workout, most reps); every past workout for that lift
+- **Weekly sets per muscle** with a 10–20 set target band (counts each exercise's main muscle)
+- **Body tracking**: body weight, body fat and measurements with charts
 - **Backup & export**: full JSON backup you can restore (e.g. on a new phone), and a CSV of every completed set for Excel/Sheets
 
 **Settings**: lb/kg (lb by default; display-only conversion, data stored in kg), default rest, auto-start timer on/off.
@@ -49,6 +60,10 @@ These are real renders of the app's Compose UI with sample data (Robolectric + R
 | Home | Logging a workout | Program day |
 |---|---|---|
 | ![](docs/screenshots/01_home.png) | ![](docs/screenshots/02_active_workout.png) | ![](docs/screenshots/03_program_day.png) |
+
+| Supersets | Plate calculator | Progress & weekly muscles | Body |
+|---|---|---|---|
+| ![](docs/screenshots/08_superset_workout.png) | ![](docs/screenshots/09_plate_calculator.png) | ![](docs/screenshots/10_progress.png) | ![](docs/screenshots/11_body.png) |
 
 | History | Workout detail | Exercise progress | Settings |
 |---|---|---|---|
@@ -81,7 +96,7 @@ Min Android version: 8.0 (API 26). Target: API 36.
 ./gradlew :app:testDebugUnitTest
 ```
 
-JVM tests (Robolectric, in-memory Room) cover: workout start/prefill logic, rest tracking, finishing/discarding, history queries, reordering, exercise de-duplication, backup round-trip, bad-file rejection, CSV output, unit conversion and PR math. `ScreenshotTest` regenerates the screenshots into `app/build/outputs/roborazzi/`.
+JVM tests (Robolectric, in-memory Room) cover: workout start/prefill logic, progression rules (add/hold/deload, rep ranges), warm-up and plate math, supersets, set types and RPE, weekly muscle counts, body metrics, the v1→v2 database upgrade on a real v1 database, rest tracking, finishing/discarding, history queries, reordering, exercise de-duplication, backup round-trip (v1 and v2 files), bad-file rejection, CSV output, unit conversion and PR math. `ScreenshotTest` regenerates the screenshots into `app/build/outputs/roborazzi/`.
 
 ## Known limitations / honest notes
 

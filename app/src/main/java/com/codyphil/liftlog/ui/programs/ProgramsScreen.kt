@@ -44,7 +44,9 @@ import kotlinx.coroutines.launch
 
 @Composable
 fun ProgramsScreen(onOpenProgram: (Long) -> Unit) {
-    val repo = appContainer().repository
+    val container = appContainer()
+    val repo = container.repository
+    val settings by container.settings.settings.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val programs by repo.observePrograms().collectAsStateWithLifecycle(null)
     var creating by remember { mutableStateOf(false) }
@@ -96,15 +98,24 @@ fun ProgramsScreen(onOpenProgram: (Long) -> Unit) {
                     }
                 }
             }
-            item { SectionHeader("Starter templates") }
+            item {
+                SectionHeader("Program library")
+                Text("Tap one to add a copy you can edit. Progression, warm-ups and supersets are already set up.",
+                    style = MaterialTheme.typography.bodySmall, color = Brand.TextMid)
+            }
             items(Templates.all) { t ->
-                Panel(onClick = { scope.launch { onOpenProgram(repo.createFromTemplate(t)) } }) {
+                Panel(onClick = { scope.launch { onOpenProgram(repo.createFromTemplate(t, settings.unit)) } }) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         IconBadge(Icons.Rounded.AutoAwesome, tint = Brand.Ember)
                         Spacer(Modifier.width(14.dp))
                         Column(Modifier.weight(1f)) {
                             Text(t.name, style = MaterialTheme.typography.titleMedium)
                             Text(t.description, style = MaterialTheme.typography.bodySmall, color = Brand.TextMid)
+                            Spacer(Modifier.height(6.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Pill(t.focus, color = Brand.Ember)
+                                Pill(t.daysPerWeek, color = Brand.TextMid)
+                            }
                         }
                         Icon(Icons.Rounded.Add, "Add template", tint = Brand.Ember)
                     }

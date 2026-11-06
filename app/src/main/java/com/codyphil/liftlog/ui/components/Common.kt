@@ -52,6 +52,7 @@ fun Panel(
     brush: Brush? = null,
     onClick: (() -> Unit)? = null,
     contentPadding: PaddingValues = PaddingValues(16.dp),
+    borderColor: Color = Brand.Line.copy(alpha = 0.6f),
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val shape = RoundedCornerShape(20.dp)
@@ -59,7 +60,7 @@ fun Panel(
         modifier
             .clip(shape)
             .then(if (brush != null) Modifier.background(brush) else Modifier.background(Brand.Panel))
-            .border(1.dp, Brand.Line.copy(alpha = 0.6f), shape)
+            .border(if (borderColor == Brand.Line.copy(alpha = 0.6f)) 1.dp else 1.5.dp, borderColor, shape)
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             .padding(contentPadding),
         content = content,

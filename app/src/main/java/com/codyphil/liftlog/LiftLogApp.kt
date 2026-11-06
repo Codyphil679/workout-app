@@ -15,6 +15,10 @@ class AppContainer(app: Application) {
     val repository = WorkoutRepository(database)
     val backup = BackupManager(database)
     val settings = SettingsRepository(app)
+
+    /** Starts a program day using the current unit and bar weight (for progression rounding and warm-ups). */
+    suspend fun startFromDay(dayId: Long): Long =
+        settings.settings.value.let { repository.startFromDay(dayId, it.unit, it.bar) }
 }
 
 class LiftLogApp : Application() {

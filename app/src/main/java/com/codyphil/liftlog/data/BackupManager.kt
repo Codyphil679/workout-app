@@ -18,7 +18,7 @@ class BackupManager(private val db: AppDatabase, private val clock: () -> Long =
             put("format", FORMAT)
             put("version", VERSION)
             put("exportedAt", clock())
-            put("exercises", dao.exercises().toJson { JSONObject().put("id", it.id).put("name", it.name) })
+            put("exercises", dao.exercises().toJson { JSONObject().put("id", it.id).put("name", it.name).put("muscle", it.muscle.name) })
             put("programs", dao.programs().toJson {
                 JSONObject().put("id", it.id).put("name", it.name).put("notes", it.notes).put("createdAt", it.createdAt)
             })
@@ -29,6 +29,9 @@ class BackupManager(private val db: AppDatabase, private val clock: () -> Long =
                 JSONObject().put("id", it.id).put("dayId", it.dayId).put("exerciseId", it.exerciseId)
                     .put("position", it.position).put("targetSets", it.targetSets).put("targetReps", it.targetReps)
                     .put("targetWeightKg", it.targetWeightKg).put("restSeconds", it.restSeconds)
+                    .put("progression", it.progression.name).put("incrementKg", it.incrementKg)
+                    .put("repMax", it.repMax ?: JSONObject.NULL).put("supersetGroup", it.supersetGroup ?: JSONObject.NULL)
+                    .put("autoWarmup", it.autoWarmup)
             })
             put("sessions", dao.sessions().toJson {
                 JSONObject().put("id", it.id).put("name", it.name).put("programDayId", it.programDayId ?: JSONObject.NULL)
@@ -38,12 +41,18 @@ class BackupManager(private val db: AppDatabase, private val clock: () -> Long =
                 JSONObject().put("id", it.id).put("sessionId", it.sessionId).put("exerciseId", it.exerciseId)
                     .put("position", it.position).put("restSeconds", it.restSeconds)
                     .put("targetReps", it.targetReps ?: JSONObject.NULL)
+                    .put("supersetGroup", it.supersetGroup ?: JSONObject.NULL).put("note", it.note ?: JSONObject.NULL)
+                    .put("repMax", it.repMax ?: JSONObject.NULL)
             })
             put("setLogs", dao.setLogs().toJson {
                 JSONObject().put("id", it.id).put("sessionExerciseId", it.sessionExerciseId).put("setNumber", it.setNumber)
                     .put("weightKg", it.weightKg).put("reps", it.reps).put("completed", it.completed)
                     .put("completedAt", it.completedAt ?: JSONObject.NULL)
                     .put("restBeforeSeconds", it.restBeforeSeconds ?: JSONObject.NULL)
+                    .put("setType", it.setType.name).put("rpe", it.rpe ?: JSONObject.NULL)
+            })
+            put("bodyMetrics", dao.bodyEntries().toJson {
+                JSONObject().put("id", it.id).put("metric", it.metric.name).put("value", it.value).put("recordedAt", it.recordedAt)
             })
         }.toString(2)
     }
@@ -58,7 +67,9 @@ class BackupManager(private val db: AppDatabase, private val clock: () -> Long =
         val version = root.optInt("version", -1)
         require(version in 1..VERSION) { "Unsupported backup version $version" }
 
-        val exercises = root.getJSONArray("exercises").map { Exercise(it.getLong("id"), it.getString("name")) }
+        val exercises = root.getJSONArray("exercises").map {
+            Exercise(it.getLong("id"), it.getString("name"), enumOr(it.optString("muscle"), Muscle.OTHER))
+        }
         val programs = root.getJSONArray("programs").map {
             Program(it.getLong("id"), it.getString("name"), it.optString("notes"), it.getLong("createdAt"))
         }
@@ -69,6 +80,11 @@ class BackupManager(private val db: AppDatabase, private val clock: () -> Long =
             DayExercise(
                 it.getLong("id"), it.getLong("dayId"), it.getLong("exerciseId"), it.getInt("position"),
                 it.getInt("targetSets"), it.getInt("targetReps"), it.getDouble("targetWeightKg"), it.getInt("restSeconds"),
+                progression = enumOr(it.optString("progression"), Progression.NONE),
+                incrementKg = it.optDouble("incrementKg", 0.0),
+                repMax = it.optLongOrNull("repMax")?.toInt(),
+                supersetGroup = it.optLongOrNull("supersetGroup")?.toInt(),
+                autoWarmup = it.optBoolean("autoWarmup", false),
             )
         }
         val sessions = root.getJSONArray("sessions").map {
@@ -81,6 +97,9 @@ class BackupManager(private val db: AppDatabase, private val clock: () -> Long =
             SessionExercise(
                 it.getLong("id"), it.getLong("sessionId"), it.getLong("exerciseId"), it.getInt("position"),
                 it.getInt("restSeconds"), it.optLongOrNull("targetReps")?.toInt(),
+                supersetGroup = it.optLongOrNull("supersetGroup")?.toInt(),
+                note = if (it.isNull("note") || !it.has("note")) null else it.getString("note"),
+                repMax = it.optLongOrNull("repMax")?.toInt(),
             )
         }
         val sets = root.getJSONArray("setLogs").map {
@@ -88,12 +107,18 @@ class BackupManager(private val db: AppDatabase, private val clock: () -> Long =
                 it.getLong("id"), it.getLong("sessionExerciseId"), it.getInt("setNumber"), it.getDouble("weightKg"),
                 it.getInt("reps"), it.getBoolean("completed"), it.optLongOrNull("completedAt"),
                 it.optLongOrNull("restBeforeSeconds")?.toInt(),
+                setType = enumOr(it.optString("setType"), SetType.NORMAL),
+                rpe = if (it.isNull("rpe") || !it.has("rpe")) null else it.getDouble("rpe"),
             )
         }
+        val body = root.optJSONArray("bodyMetrics")?.map {
+            BodyEntry(it.getLong("id"), BodyMetric.valueOf(it.getString("metric")), it.getDouble("value"), it.getLong("recordedAt"))
+        }.orEmpty()
 
         db.withTransaction {
             dao.clearSetLogs(); dao.clearSessionExercises(); dao.clearSessions()
             dao.clearDayExercises(); dao.clearProgramDays(); dao.clearPrograms(); dao.clearExercises()
+            dao.clearBodyEntries()
             dao.insertExercises(exercises)
             dao.insertPrograms(programs)
             dao.insertProgramDays(days)
@@ -101,20 +126,23 @@ class BackupManager(private val db: AppDatabase, private val clock: () -> Long =
             dao.insertSessions(sessions)
             dao.insertSessionExercises(sessionExercises)
             dao.insertSetLogs(sets)
+            dao.insertBodyEntries(body)
         }
         return ImportResult(programs.size, sessions.count { it.endedAt != null }, sets.size)
     }
 
     suspend fun exportCsv(unit: WeightUnit): String {
         val sb = StringBuilder()
-        sb.append("date,workout,exercise,set,weight_${unit.label},reps,seconds_since_previous_set\n")
+        sb.append("date,workout,exercise,set,set_type,weight_${unit.label},reps,rpe,seconds_since_previous_set\n")
         for (r in dao.csvRows()) {
             sb.append(csv(Format.isoDateTime(r.startedAt))).append(',')
                 .append(csv(r.sessionName)).append(',')
                 .append(csv(r.exerciseName)).append(',')
                 .append(r.setNumber).append(',')
+                .append(r.setType.name.lowercase()).append(',')
                 .append(Units.format(r.weightKg, unit)).append(',')
                 .append(r.reps).append(',')
+                .append(r.rpe?.let { Units.formatNumber(it) } ?: "").append(',')
                 .append(r.restBeforeSeconds?.toString() ?: "")
                 .append('\n')
         }
@@ -125,7 +153,7 @@ class BackupManager(private val db: AppDatabase, private val clock: () -> Long =
 
     companion object {
         const val FORMAT = "liftlog-backup"
-        const val VERSION = 1
+        const val VERSION = 2
 
         /** RFC 4180 quoting, plus a leading quote on formula-like cells so spreadsheets don't execute them. */
         fun csv(value: String): String {
@@ -141,5 +169,8 @@ private inline fun <T> List<T>.toJson(block: (T) -> JSONObject): JSONArray =
 
 private inline fun <T> JSONArray.map(block: (JSONObject) -> T): List<T> =
     (0 until length()).map { block(getJSONObject(it)) }
+
+private inline fun <reified E : Enum<E>> enumOr(name: String?, fallback: E): E =
+    if (name.isNullOrEmpty()) fallback else runCatching { enumValueOf<E>(name) }.getOrDefault(fallback)
 
 private fun JSONObject.optLongOrNull(key: String): Long? = if (isNull(key) || !has(key)) null else getLong(key)

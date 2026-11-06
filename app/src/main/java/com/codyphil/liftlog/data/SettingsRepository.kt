@@ -11,7 +11,13 @@ data class AppSettings(
     val unit: WeightUnit = WeightUnit.LB,
     val defaultRestSeconds: Int = 90,
     val autoStartRest: Boolean = true,
-)
+    val trackRpe: Boolean = false,
+    /** Empty-bar weight for each unit, used by the plate and warm-up calculators. */
+    val barLb: Double = 45.0,
+    val barKg: Double = 20.0,
+) {
+    val bar: Double get() = if (unit == WeightUnit.LB) barLb else barKg
+}
 
 class SettingsRepository(context: Context) {
     private val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
@@ -22,6 +28,9 @@ class SettingsRepository(context: Context) {
         unit = runCatching { WeightUnit.valueOf(prefs.getString("unit", "LB")!!) }.getOrDefault(WeightUnit.LB),
         defaultRestSeconds = prefs.getInt("defaultRest", 90),
         autoStartRest = prefs.getBoolean("autoStartRest", true),
+        trackRpe = prefs.getBoolean("trackRpe", false),
+        barLb = prefs.getFloat("barLb", 45f).toDouble(),
+        barKg = prefs.getFloat("barKg", 20f).toDouble(),
     )
 
     fun update(transform: (AppSettings) -> AppSettings) {
@@ -30,6 +39,9 @@ class SettingsRepository(context: Context) {
             putString("unit", next.unit.name)
             putInt("defaultRest", next.defaultRestSeconds)
             putBoolean("autoStartRest", next.autoStartRest)
+            putBoolean("trackRpe", next.trackRpe)
+            putFloat("barLb", next.barLb.toFloat())
+            putFloat("barKg", next.barKg.toFloat())
         }
         _settings.value = next
     }

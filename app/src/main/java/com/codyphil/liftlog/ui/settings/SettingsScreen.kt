@@ -5,6 +5,7 @@ import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -44,6 +45,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.codyphil.liftlog.domain.Format
+import com.codyphil.liftlog.domain.Units
+import com.codyphil.liftlog.ui.components.Pill
 import com.codyphil.liftlog.domain.WeightUnit
 import com.codyphil.liftlog.ui.appContainer
 import com.codyphil.liftlog.ui.components.ConfirmDialog
@@ -120,6 +123,36 @@ fun SettingsScreen() {
                         onCheckedChange = { v -> container.settings.update { it.copy(autoStartRest = v) } },
                         colors = SwitchDefaults.colors(checkedTrackColor = Brand.Volt, checkedThumbColor = Brand.Ink),
                     )
+                }
+                HorizontalDivider(Modifier.padding16(), color = Brand.Line)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Track RPE", style = MaterialTheme.typography.titleMedium)
+                        Text("Adds an effort column (6–10) to each set.", style = MaterialTheme.typography.bodySmall, color = Brand.TextMid)
+                    }
+                    Switch(
+                        checked = settings.trackRpe,
+                        onCheckedChange = { v -> container.settings.update { it.copy(trackRpe = v) } },
+                        colors = SwitchDefaults.colors(checkedTrackColor = Brand.Volt, checkedThumbColor = Brand.Ink),
+                    )
+                }
+                HorizontalDivider(Modifier.padding16(), color = Brand.Line)
+                Text("Empty bar weight", style = MaterialTheme.typography.titleMedium)
+                Text("Used by the plate calculator and warm-up sets.", style = MaterialTheme.typography.bodySmall, color = Brand.TextMid)
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val options = if (settings.unit == WeightUnit.LB) listOf(45.0, 35.0, 25.0, 15.0) else listOf(20.0, 15.0, 10.0)
+                    options.forEach { b ->
+                        Pill(
+                            "${Units.formatNumber(b)} ${settings.unit.label}",
+                            color = if (b == settings.bar) Brand.Volt else Brand.TextMid,
+                            modifier = Modifier.clickable {
+                                container.settings.update {
+                                    if (it.unit == WeightUnit.LB) it.copy(barLb = b) else it.copy(barKg = b)
+                                }
+                            },
+                        )
+                    }
                 }
                 HorizontalDivider(Modifier.padding16(), color = Brand.Line)
                 Row(verticalAlignment = Alignment.CenterVertically) {

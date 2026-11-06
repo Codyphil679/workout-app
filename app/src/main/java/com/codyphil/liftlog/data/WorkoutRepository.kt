@@ -1,6 +1,12 @@
 package com.codyphil.liftlog.data
 
 import androidx.room.withTransaction
+import com.codyphil.liftlog.domain.Plan
+import com.codyphil.liftlog.domain.ProgressionConfig
+import com.codyphil.liftlog.domain.Progressions
+import com.codyphil.liftlog.domain.Units
+import com.codyphil.liftlog.domain.Warmups
+import com.codyphil.liftlog.domain.WeightUnit
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
@@ -15,10 +21,13 @@ class WorkoutRepository(
     private val programDao = db.programDao()
     private val sessionDao = db.sessionDao()
     private val historyDao = db.historyDao()
+    private val bodyDao = db.bodyDao()
 
-    suspend fun seedIfEmpty() {
-        if (exerciseDao.count() == 0) {
-            exerciseDao.insertAllIgnore(Seed.exercises.map { Exercise(name = it) })
+    /** Adds missing built-in exercises and fills in muscle groups for ones created before muscles existed. */
+    suspend fun seedIfEmpty() = db.withTransaction {
+        for ((name, muscle) in Seed.muscles) {
+            if (exerciseDao.findByName(name) == null) exerciseDao.insertIgnore(Exercise(name = name, muscle = muscle))
+            else exerciseDao.backfillMuscle(name, muscle)
         }
     }
 
@@ -28,12 +37,12 @@ class WorkoutRepository(
     fun observeExercise(id: Long): Flow<Exercise?> = exerciseDao.observe(id)
 
     /** Returns the id of the exercise with this name, creating it if needed (case-insensitive match). */
-    suspend fun getOrCreateExercise(name: String): Long {
+    suspend fun getOrCreateExercise(name: String, muscle: Muscle = Seed.muscleFor(name)): Long {
         val clean = name.trim().replace(Regex("\\s+"), " ")
         require(clean.isNotEmpty()) { "Exercise name is empty" }
         exerciseDao.findByName(clean)?.let { return it.id }
         // IGNORE + re-read handles a concurrent insert of the same name (e.g. first-launch seeding).
-        val id = exerciseDao.insertIgnore(Exercise(name = clean))
+        val id = exerciseDao.insertIgnore(Exercise(name = clean, muscle = muscle))
         return if (id != -1L) id else requireNotNull(exerciseDao.findByName(clean)).id
     }
 
@@ -43,9 +52,11 @@ class WorkoutRepository(
         if (clean.isEmpty()) return false
         val existing = exerciseDao.findByName(clean)
         if (existing != null && existing.id != id) return false
-        exerciseDao.update(Exercise(id = id, name = clean))
+        exerciseDao.rename(id, clean)
         return true
     }
+
+    suspend fun setExerciseMuscle(id: Long, muscle: Muscle) = exerciseDao.setMuscle(id, muscle)
 
     /** Only deletes exercises that are not referenced by any program or workout. */
     suspend fun deleteExerciseIfUnused(id: Long): Boolean = db.withTransaction {
@@ -66,12 +77,21 @@ class WorkoutRepository(
     suspend fun createProgram(name: String, notes: String = ""): Long =
         programDao.insert(Program(name = name.trim(), notes = notes.trim(), createdAt = clock()))
 
-    suspend fun createFromTemplate(template: Templates.Template): Long = db.withTransaction {
+    suspend fun createFromTemplate(template: Templates.Template, unit: WeightUnit = WeightUnit.LB): Long = db.withTransaction {
         val programId = createProgram(template.name, template.description)
         template.days.forEach { day ->
             val dayId = addDay(programId, day.name)
             day.items.forEach { item ->
-                addDayExercise(dayId, getOrCreateExercise(item.exercise), item.sets, item.reps, 0.0, item.rest)
+                val d = Progressions.defaultFor(item.exercise, item.reps, unit)
+                val progression = item.progression ?: d.progression
+                addDayExercise(
+                    dayId, getOrCreateExercise(item.exercise), item.sets, item.reps, 0.0, item.rest,
+                    progression = progression,
+                    incrementKg = d.incrementKg,
+                    repMax = if (progression == Progression.DOUBLE) item.repMax ?: (item.reps + 4) else null,
+                    autoWarmup = item.autoWarmup,
+                    supersetGroup = item.superset,
+                )
             }
         }
         programId
@@ -109,24 +129,46 @@ class WorkoutRepository(
 
     suspend fun addDayExercise(
         dayId: Long, exerciseId: Long, sets: Int, reps: Int, weightKg: Double, restSeconds: Int,
+        progression: Progression = Progression.NONE,
+        incrementKg: Double = 0.0,
+        repMax: Int? = null,
+        autoWarmup: Boolean = false,
+        supersetGroup: Int? = null,
     ): Long = db.withTransaction {
         programDao.insertDayExercise(
             DayExercise(
                 dayId = dayId, exerciseId = exerciseId, position = programDao.nextExercisePosition(dayId),
                 targetSets = sets, targetReps = reps, targetWeightKg = weightKg, restSeconds = restSeconds,
+                progression = progression, incrementKg = incrementKg, repMax = repMax, autoWarmup = autoWarmup,
+                supersetGroup = supersetGroup,
             )
         )
     }
 
-    suspend fun updateDayExercise(id: Long, dayId: Long, sets: Int, reps: Int, weightKg: Double, restSeconds: Int) =
-        db.withTransaction {
-            val item = programDao.getDayExercises(dayId).firstOrNull { it.id == id } ?: return@withTransaction
-            programDao.updateDayExercises(
-                listOf(item.copy(targetSets = sets, targetReps = reps, targetWeightKg = weightKg, restSeconds = restSeconds))
+    suspend fun updateDayExercise(
+        id: Long, dayId: Long, sets: Int, reps: Int, weightKg: Double, restSeconds: Int,
+        progression: Progression = Progression.NONE,
+        incrementKg: Double = 0.0,
+        repMax: Int? = null,
+        autoWarmup: Boolean = false,
+    ) = db.withTransaction {
+        val item = programDao.getDayExercises(dayId).firstOrNull { it.id == id } ?: return@withTransaction
+        programDao.updateDayExercises(
+            listOf(
+                item.copy(
+                    targetSets = sets, targetReps = reps, targetWeightKg = weightKg, restSeconds = restSeconds,
+                    progression = progression, incrementKg = incrementKg, repMax = repMax, autoWarmup = autoWarmup,
+                )
             )
-        }
+        )
+    }
 
-    suspend fun deleteDayExercise(id: Long) = programDao.deleteDayExercise(id)
+    suspend fun deleteDayExercise(id: Long) = db.withTransaction {
+        val dayId = programDao.getDayExerciseDayId(id) ?: return@withTransaction
+        programDao.deleteDayExercise(id)
+        val items = programDao.getDayExercises(dayId)
+        programDao.updateDayExercises(Supersets.dissolveSingletons(items, { it.supersetGroup }) { it.copy(supersetGroup = null) })
+    }
 
     suspend fun moveDayExercise(id: Long, dayId: Long, delta: Int) = db.withTransaction {
         val items = programDao.getDayExercises(dayId).toMutableList()
@@ -136,6 +178,15 @@ class WorkoutRepository(
         if (from == to) return@withTransaction
         items.add(to, items.removeAt(from))
         programDao.updateDayExercises(items.mapIndexed { i, d -> d.copy(position = i) })
+    }
+
+    /** [link] = true joins this exercise with the next one; false removes it from its superset. */
+    suspend fun setDaySuperset(id: Long, dayId: Long, link: Boolean) = db.withTransaction {
+        val items = programDao.getDayExercises(dayId)
+        val updated = Supersets.apply(items, items.indexOfFirst { it.id == id }, link, { it.supersetGroup }) { e, g ->
+            e.copy(supersetGroup = g)
+        }
+        programDao.updateDayExercises(updated)
     }
 
     // ---------- Workouts ----------
@@ -156,36 +207,62 @@ class WorkoutRepository(
             }
         }
 
+    /** Working sets from the most recent finished workout with this exercise. */
     suspend fun lastTimeSets(exerciseId: Long): List<ExerciseSetRow> = historyDao.lastSessionSets(exerciseId)
 
-    /** Starts a workout from a program day. Returns the existing active workout's id instead if one is running. */
-    suspend fun startFromDay(dayId: Long): Long = db.withTransaction {
-        sessionDao.getActive()?.let { return@withTransaction it.id }
-        val day = requireNotNull(programDao.getDay(dayId)) { "Day $dayId not found" }
-        val program = programDao.get(day.programId)
-        val sessionId = sessionDao.insert(
-            WorkoutSession(
-                name = listOfNotNull(program?.name, day.name).joinToString(" · "),
-                programDayId = dayId,
-                startedAt = clock(),
-            )
-        )
-        programDao.getDayExercises(dayId).forEachIndexed { index, de ->
-            val seId = sessionDao.insertSessionExercise(
-                SessionExercise(
-                    sessionId = sessionId, exerciseId = de.exerciseId, position = index,
-                    restSeconds = de.restSeconds, targetReps = de.targetReps,
+    /**
+     * Starts a workout from a program day, applying each exercise's progression rule.
+     * Returns the existing active workout's id instead if one is running.
+     * @param barDisplay empty-bar weight in [unit], used for automatic warm-up sets.
+     */
+    suspend fun startFromDay(dayId: Long, unit: WeightUnit = WeightUnit.LB, barDisplay: Double = defaultBar(unit)): Long =
+        db.withTransaction {
+            sessionDao.getActive()?.let { return@withTransaction it.id }
+            val day = requireNotNull(programDao.getDay(dayId)) { "Day $dayId not found" }
+            val program = programDao.get(day.programId)
+            val sessionId = sessionDao.insert(
+                WorkoutSession(
+                    name = listOfNotNull(program?.name, day.name).joinToString(" · "),
+                    programDayId = dayId,
+                    startedAt = clock(),
                 )
             )
-            val last = historyDao.lastSessionSets(de.exerciseId)
-            sessionDao.insertSets((1..de.targetSets.coerceAtLeast(1)).map { n ->
-                // Prefill with what you lifted last time for this set; fall back to the program's starting weight.
-                val prev = last.getOrNull(n - 1) ?: last.lastOrNull()
-                SetLog(sessionExerciseId = seId, setNumber = n, weightKg = prev?.weightKg ?: de.targetWeightKg, reps = de.targetReps)
-            })
+            programDao.getDayExercises(dayId).forEachIndexed { index, de ->
+                val plan = planFor(de, unit)
+                val seId = sessionDao.insertSessionExercise(
+                    SessionExercise(
+                        sessionId = sessionId, exerciseId = de.exerciseId, position = index,
+                        restSeconds = de.restSeconds, targetReps = de.targetReps,
+                        supersetGroup = de.supersetGroup, note = plan.note,
+                        repMax = if (de.progression == Progression.DOUBLE) de.repMax else null,
+                    )
+                )
+                val warmups = if (de.autoWarmup) warmupSets(plan.sets.first().first, unit, barDisplay) else emptyList()
+                val all = warmups.map { (kg, reps) -> Triple(kg, reps, SetType.WARMUP) } +
+                    plan.sets.map { (kg, reps) -> Triple(kg, reps, SetType.NORMAL) }
+                sessionDao.insertSets(all.mapIndexed { i, (kg, reps, type) ->
+                    SetLog(sessionExerciseId = seId, setNumber = i + 1, weightKg = kg, reps = reps, setType = type)
+                })
+            }
+            sessionId
         }
-        sessionId
+
+    private suspend fun planFor(de: DayExercise, unit: WeightUnit): Plan {
+        val recent = historyDao.recentSessionSets(de.exerciseId, 2)
+            .groupBy { it.sessionId }.values.toList() // query is newest-first; groupBy keeps first-seen order
+        val cfg = ProgressionConfig(
+            type = de.progression,
+            targetSets = de.targetSets,
+            repMin = de.targetReps,
+            repMax = de.repMax ?: de.targetReps,
+            startWeightKg = de.targetWeightKg,
+            incrementKg = de.incrementKg,
+        )
+        return Progressions.plan(cfg, recent, unit)
     }
+
+    private fun warmupSets(workKg: Double, unit: WeightUnit, barDisplay: Double): List<Pair<Double, Int>> =
+        Warmups.forWorkingWeight(Units.fromKg(workKg, unit), barDisplay, unit).map { (w, r) -> Units.toKg(w, unit) to r }
 
     suspend fun startEmpty(): Long = db.withTransaction {
         sessionDao.getActive()?.id ?: sessionDao.insert(
@@ -206,7 +283,12 @@ class WorkoutRepository(
         sessionDao.insertSets(sets)
     }
 
-    suspend fun removeSessionExercise(sessionExerciseId: Long) = sessionDao.deleteSessionExercise(sessionExerciseId)
+    suspend fun removeSessionExercise(sessionExerciseId: Long) = db.withTransaction {
+        val se = sessionDao.getSessionExercise(sessionExerciseId) ?: return@withTransaction
+        sessionDao.deleteSessionExercise(sessionExerciseId)
+        val items = sessionDao.getSessionExercises(se.sessionId)
+        sessionDao.updateSessionExercises(Supersets.dissolveSingletons(items, { it.supersetGroup }) { it.copy(supersetGroup = null) })
+    }
 
     suspend fun setSessionExerciseRest(sessionExerciseId: Long, restSeconds: Int) {
         val se = sessionDao.getSessionExercise(sessionExerciseId) ?: return
@@ -223,17 +305,48 @@ class WorkoutRepository(
         sessionDao.updateSessionExercises(items.mapIndexed { i, s -> s.copy(position = i) })
     }
 
+    suspend fun setSessionSuperset(sessionExerciseId: Long, link: Boolean) = db.withTransaction {
+        val se = sessionDao.getSessionExercise(sessionExerciseId) ?: return@withTransaction
+        val items = sessionDao.getSessionExercises(se.sessionId)
+        val updated = Supersets.apply(items, items.indexOfFirst { it.id == sessionExerciseId }, link, { it.supersetGroup }) { e, g ->
+            e.copy(supersetGroup = g)
+        }
+        sessionDao.updateSessionExercises(updated)
+    }
+
     suspend fun addSet(sessionExerciseId: Long) = db.withTransaction {
         val sets = sessionDao.getSets(sessionExerciseId)
-        val last = sets.lastOrNull()
+        val last = sets.lastOrNull { it.setType != SetType.WARMUP } ?: sets.lastOrNull()
         sessionDao.insertSet(
             SetLog(
                 sessionExerciseId = sessionExerciseId,
-                setNumber = (last?.setNumber ?: 0) + 1,
+                setNumber = (sets.lastOrNull()?.setNumber ?: 0) + 1,
                 weightKg = last?.weightKg ?: 0.0,
                 reps = last?.reps ?: 0,
             )
         )
+    }
+
+    /**
+     * Replaces any unfinished warm-up sets with a fresh ramp up to the first working set's weight.
+     * Returns false when there's no working weight to warm up to (or it's too light to need one).
+     */
+    suspend fun addWarmupSets(sessionExerciseId: Long, unit: WeightUnit, barDisplay: Double): Boolean = db.withTransaction {
+        val sets = sessionDao.getSets(sessionExerciseId)
+        val work = sets.firstOrNull { it.setType != SetType.WARMUP }?.weightKg ?: return@withTransaction false
+        val ramp = warmupSets(work, unit, barDisplay)
+        if (ramp.isEmpty()) return@withTransaction false
+        sets.filter { it.setType == SetType.WARMUP && !it.completed }.forEach { sessionDao.deleteSet(it.id) }
+        val keptWarmups = sets.filter { it.setType == SetType.WARMUP && it.completed }
+        val working = sets.filter { it.setType != SetType.WARMUP }
+        sessionDao.insertSets(ramp.map { (kg, reps) ->
+            SetLog(sessionExerciseId = sessionExerciseId, setNumber = 0, weightKg = kg, reps = reps, setType = SetType.WARMUP)
+        })
+        // Renumber: completed warm-ups, new warm-ups, then working sets.
+        val fresh = sessionDao.getSets(sessionExerciseId).filter { it.setType == SetType.WARMUP && !it.completed }
+        val ordered = keptWarmups + fresh + working
+        sessionDao.updateSets(ordered.mapIndexed { i, s -> s.copy(setNumber = i + 1) })
+        true
     }
 
     suspend fun deleteSet(setId: Long) = db.withTransaction {
@@ -246,6 +359,16 @@ class WorkoutRepository(
     suspend fun updateSetValues(setId: Long, weightKg: Double, reps: Int) {
         val set = sessionDao.getSet(setId) ?: return
         if (set.weightKg != weightKg || set.reps != reps) sessionDao.updateSet(set.copy(weightKg = weightKg, reps = reps))
+    }
+
+    suspend fun setSetType(setId: Long, type: SetType) {
+        val set = sessionDao.getSet(setId) ?: return
+        sessionDao.updateSet(set.copy(setType = type))
+    }
+
+    suspend fun setSetRpe(setId: Long, rpe: Double?) {
+        val set = sessionDao.getSet(setId) ?: return
+        sessionDao.updateSet(set.copy(rpe = rpe))
     }
 
     /**
@@ -279,6 +402,8 @@ class WorkoutRepository(
         if (sessionDao.lastCompletedAt(sessionId) == null) return@withTransaction false
         sessionDao.deleteIncompleteSets(sessionId)
         sessionDao.deleteEmptySessionExercises(sessionId)
+        val items = sessionDao.getSessionExercises(sessionId)
+        sessionDao.updateSessionExercises(Supersets.dissolveSingletons(items, { it.supersetGroup }) { it.copy(supersetGroup = null) })
         val session = sessionDao.get(sessionId) ?: return@withTransaction false
         sessionDao.update(session.copy(endedAt = clock()))
         true
@@ -300,4 +425,43 @@ class WorkoutRepository(
 
     fun observeExerciseHistory(exerciseId: Long): Flow<List<ExerciseSetRow>> = historyDao.observeExerciseSets(exerciseId)
     fun observeExercisesWithHistory(): Flow<List<ExerciseHistorySummary>> = historyDao.observeExercisesWithHistory()
+    fun observeMuscleSets(since: Long): Flow<List<MuscleSets>> = historyDao.observeMuscleSets(since)
+
+    // ---------- Body ----------
+
+    fun observeBody(metric: BodyMetric): Flow<List<BodyEntry>> = bodyDao.observe(metric)
+    fun observeAllBody(): Flow<List<BodyEntry>> = bodyDao.observeAll()
+    suspend fun addBodyEntry(metric: BodyMetric, value: Double, at: Long = clock()): Long =
+        bodyDao.insert(BodyEntry(metric = metric, value = value, recordedAt = at))
+    suspend fun deleteBodyEntry(id: Long) = bodyDao.delete(id)
+
+    companion object {
+        fun defaultBar(unit: WeightUnit) = if (unit == WeightUnit.LB) 45.0 else 20.0
+    }
+}
+
+/** Pure helpers for superset grouping, shared by program days and workouts. */
+object Supersets {
+    /**
+     * Links item [index] with the next item ([link] = true) or removes it from its group ([link] = false).
+     * Returns the full list with updated groups; groups left with one member are dissolved.
+     */
+    fun <T> apply(items: List<T>, index: Int, link: Boolean, group: (T) -> Int?, withGroup: (T, Int?) -> T): List<T> {
+        if (index !in items.indices) return items
+        val out = items.toMutableList()
+        if (link) {
+            if (index + 1 > out.lastIndex) return items
+            val g = group(out[index]) ?: group(out[index + 1]) ?: ((out.mapNotNull(group).maxOrNull() ?: 0) + 1)
+            out[index] = withGroup(out[index], g)
+            out[index + 1] = withGroup(out[index + 1], g)
+        } else {
+            out[index] = withGroup(out[index], null)
+        }
+        return dissolveSingletons(out, group) { withGroup(it, null) }
+    }
+
+    fun <T> dissolveSingletons(items: List<T>, group: (T) -> Int?, clear: (T) -> T): List<T> {
+        val counts = items.mapNotNull(group).groupingBy { it }.eachCount()
+        return items.map { val g = group(it); if (g != null && counts[g] == 1) clear(it) else it }
+    }
 }

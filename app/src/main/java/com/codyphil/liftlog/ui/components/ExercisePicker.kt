@@ -2,6 +2,8 @@ package com.codyphil.liftlog.ui.components
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -9,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -16,6 +19,8 @@ import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.FitnessCenter
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -33,6 +38,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import com.codyphil.liftlog.data.Exercise
+import com.codyphil.liftlog.data.Muscle
 import com.codyphil.liftlog.ui.theme.Brand
 
 /**
@@ -51,9 +57,10 @@ fun ExercisePickerSheet(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var query by remember { mutableStateOf("") }
     var pendingDelete by remember { mutableStateOf<Exercise?>(null) }
-    val filtered = remember(query, exercises) {
+    var muscle by remember { mutableStateOf<Muscle?>(null) }
+    val filtered = remember(query, exercises, muscle) {
         val q = query.trim()
-        if (q.isEmpty()) exercises else exercises.filter { it.name.contains(q, ignoreCase = true) }
+        exercises.filter { (q.isEmpty() || it.name.contains(q, ignoreCase = true)) && (muscle == null || it.muscle == muscle) }
     }
     val exactMatch = exercises.any { it.name.equals(query.trim(), ignoreCase = true) }
 
@@ -68,6 +75,20 @@ fun ExercisePickerSheet(
             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
             modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
         )
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = 20.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(bottom = 8.dp),
+        ) {
+            item {
+                FilterChip(selected = muscle == null, onClick = { muscle = null }, label = { Text("All") },
+                    colors = FilterChipDefaults.filterChipColors(selectedContainerColor = Brand.Volt, selectedLabelColor = Brand.Ink))
+            }
+            items(Muscle.entries.filter { m -> exercises.any { it.muscle == m } }) { m ->
+                FilterChip(selected = muscle == m, onClick = { muscle = if (muscle == m) null else m }, label = { Text(m.label) },
+                    colors = FilterChipDefaults.filterChipColors(selectedContainerColor = Brand.Volt, selectedLabelColor = Brand.Ink))
+            }
+        }
         LazyColumn(Modifier.fillMaxHeight(0.75f)) {
             if (query.isNotBlank() && !exactMatch) {
                 item {
@@ -92,7 +113,12 @@ fun ExercisePickerSheet(
                 ) {
                     IconBadge(Icons.Rounded.FitnessCenter, tint = Brand.TextMid, size = 36.dp)
                     Spacer(Modifier.width(14.dp))
-                    Text(ex.name, style = MaterialTheme.typography.bodyLarge)
+                    androidx.compose.foundation.layout.Column {
+                        Text(ex.name, style = MaterialTheme.typography.bodyLarge)
+                        if (ex.muscle != Muscle.OTHER) {
+                            Text(ex.muscle.label, style = MaterialTheme.typography.bodySmall, color = Brand.TextLow)
+                        }
+                    }
                 }
             }
         }
