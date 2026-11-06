@@ -85,7 +85,7 @@ fun BodyScreen(onBack: () -> Unit) {
     val unit = settings.unit
     val scope = rememberCoroutineScope()
     var metric by rememberSaveable { mutableStateOf(BodyMetric.BODY_WEIGHT) }
-    val entries by repo.observeBody(metric).collectAsStateWithLifecycle(emptyList())
+    val entries by remember(metric) { repo.observeBody(metric) }.collectAsStateWithLifecycle(emptyList())
     var adding by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf<Long?>(null) }
     val label = metric.unitLabel(unit)

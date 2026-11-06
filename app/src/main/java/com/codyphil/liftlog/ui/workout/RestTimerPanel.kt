@@ -48,6 +48,10 @@ fun RestTimerPanel(state: RestState, modifier: Modifier = Modifier) {
         while (true) { now = System.currentTimeMillis(); delay(100) }
     }
     val remaining = state.remainingMillis(now)
+    // The service normally clears the timer; if it isn't running for some reason, don't sit at 0:00 forever.
+    LaunchedEffect(remaining == 0L, state) {
+        if (remaining == 0L) { delay(3_000); RestTimer.finished(state) }
+    }
     val progress = (remaining / (state.totalSeconds * 1000f)).coerceIn(0f, 1f)
     val urgent = remaining <= 10_000
 

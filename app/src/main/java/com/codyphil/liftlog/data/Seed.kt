@@ -1,6 +1,9 @@
 package com.codyphil.liftlog.data
 
 object Seed {
+    /** Bump when built-in exercises are added, so existing installs get them once. */
+    const val VERSION = 2
+
     /** Built-in exercises and their primary muscle. */
     val muscles: Map<String, Muscle> = linkedMapOf(
         "Back Squat" to Muscle.QUADS, "Front Squat" to Muscle.QUADS, "Deadlift" to Muscle.HAMSTRINGS,

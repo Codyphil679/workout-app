@@ -71,8 +71,8 @@ fun ExerciseProgressScreen(exerciseId: Long, onBack: () -> Unit, onOpenSession: 
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val settings by container.settings.settings.collectAsStateWithLifecycle()
-    val exercise by repo.observeExercise(exerciseId).collectAsStateWithLifecycle(null)
-    val rows by repo.observeExerciseHistory(exerciseId).collectAsStateWithLifecycle(emptyList())
+    val exercise by remember(exerciseId) { repo.observeExercise(exerciseId) }.collectAsStateWithLifecycle(null)
+    val rows by remember(exerciseId) { repo.observeExerciseHistory(exerciseId) }.collectAsStateWithLifecycle(emptyList())
     var metric by rememberSaveable { mutableStateOf(Metric.E1RM) }
     var renaming by remember { mutableStateOf(false) }
     var pickingMuscle by remember { mutableStateOf(false) }

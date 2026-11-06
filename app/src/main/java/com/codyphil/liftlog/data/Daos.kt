@@ -231,6 +231,29 @@ interface SessionDao {
     )
     suspend fun lastCompletedAt(sessionId: Long): Long?
 
+    @Query(
+        """SELECT COUNT(*) FROM set_logs l JOIN session_exercises se ON se.id = l.sessionExerciseId
+           WHERE se.sessionId = :sessionId AND l.completed = 1 AND l.setType != 'WARMUP'"""
+    )
+    suspend fun completedWorkingSets(sessionId: Long): Int
+
+    // Targeted single-column updates. Read-copy-write of the whole row could race with completeSet()
+    // and write back a stale "not completed" row.
+    @Query("UPDATE set_logs SET weightKg = :weightKg, reps = :reps WHERE id = :id AND completed = 0")
+    suspend fun setValues(id: Long, weightKg: Double, reps: Int)
+
+    @Query("UPDATE set_logs SET setType = :type WHERE id = :id")
+    suspend fun setType(id: Long, type: SetType)
+
+    @Query("UPDATE set_logs SET rpe = :rpe WHERE id = :id")
+    suspend fun setRpe(id: Long, rpe: Double?)
+
+    @Query("UPDATE set_logs SET amrap = :amrap, targetReps = CASE WHEN :amrap THEN COALESCE(targetReps, reps) ELSE NULL END WHERE id = :id")
+    suspend fun setAmrap(id: Long, amrap: Boolean)
+
+    @Query("UPDATE set_logs SET completed = 0, completedAt = NULL, restBeforeSeconds = NULL WHERE id = :id")
+    suspend fun uncomplete(id: Long)
+
     @Insert
     suspend fun insertSet(set: SetLog): Long
 
@@ -347,6 +370,7 @@ interface HistoryDao {
            JOIN session_exercises se ON se.id = l.sessionExerciseId
            JOIN sessions s ON s.id = se.sessionId
            WHERE se.exerciseId = :exerciseId AND l.completed = 1 AND l.setType != 'WARMUP' AND l.reps BETWEEN 1 AND 12
+             AND l.weightKg > 0
              AND s.endedAt IS NOT NULL"""
     )
     suspend fun bestE1rm(exerciseId: Long): Double?

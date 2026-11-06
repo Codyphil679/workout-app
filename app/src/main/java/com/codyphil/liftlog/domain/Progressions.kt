@@ -56,10 +56,17 @@ object Progressions {
             )
 
             Progression.LINEAR -> {
-                val w = last.maxOf { it.weightKg }
-                // A workout "succeeded" when every target set at its top weight reached the target reps.
+                // The working weight is the heaviest weight done for all target sets; a heavier single
+                // or a top set on its own doesn't become the new working weight.
+                fun workingWeight(s: List<ExerciseSetRow>): Double {
+                    val counts = s.groupBy { Math.round(it.weightKg * 1000) }
+                    return counts.filter { it.value.size >= sets }.keys.maxOrNull()?.let { k -> counts.getValue(k).first().weightKg }
+                        ?: s.maxOf { it.weightKg }
+                }
+                val w = workingWeight(last)
+                // A workout "succeeded" when every target set at its working weight reached the target reps.
                 fun success(s: List<ExerciseSetRow>): Boolean {
-                    val top = s.maxOf { it.weightKg }
+                    val top = workingWeight(s)
                     val atTop = s.filter { kotlin.math.abs(it.weightKg - top) < 1e-6 }
                     return atTop.size >= sets && atTop.all { it.reps >= cfg.repMin }
                 }
@@ -81,8 +88,9 @@ object Progressions {
                         "+$inc: you hit every rep last time",
                     )
                     recent.size >= 2 && !success(recent[1]) &&
-                        kotlin.math.abs(recent[1].maxOf { it.weightKg } - w) < 1e-6 -> {
-                        val deload = roundDownLoadable(w * 0.9, unit)
+                        kotlin.math.abs(workingWeight(recent[1]) - w) < 1e-6 -> {
+                        // Never deload a light weight down to nothing.
+                        val deload = roundDownLoadable(w * 0.9, unit).takeIf { it > 0 } ?: w
                         Plan(List(sets) { deload to cfg.repMin }, "Deload −10%: missed reps two workouts in a row")
                     }
                     else -> Plan(

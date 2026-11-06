@@ -35,9 +35,10 @@ class HealthSync(private val context: Context, private val repo: WorkoutReposito
 
     private fun client() = HealthConnectClient.getOrCreate(context)
 
-    suspend fun hasPermission(): Boolean =
+    suspend fun hasPermission(): Boolean = runCatching {
         availability() == Availability.AVAILABLE &&
             client().permissionController.getGrantedPermissions().containsAll(permissions)
+    }.getOrDefault(false)
 
     /** Writes (or updates) one finished workout. Returns false when it couldn't be written. */
     suspend fun syncSession(sessionId: Long, unit: WeightUnit): Boolean = runCatching {
@@ -49,7 +50,16 @@ class HealthSync(private val context: Context, private val repo: WorkoutReposito
     }.getOrDefault(false)
 
     /** Writes every finished workout. Safe to repeat: records are matched by workout id. Returns how many were written. */
-    suspend fun syncAll(unit: WeightUnit): Int {
+    suspend fun syncAll(unit: WeightUnit): Int = runCatching { syncAllUnsafe(unit) }.getOrDefault(0)
+
+    /** Removes a workout from Health Connect (when it's deleted in LiftLog). */
+    suspend fun deleteSession(sessionId: Long): Boolean = runCatching {
+        if (!hasPermission()) return false
+        client().deleteRecords(ExerciseSessionRecord::class, emptyList(), listOf(HealthRecords.clientId(sessionId)))
+        true
+    }.getOrDefault(false)
+
+    private suspend fun syncAllUnsafe(unit: WeightUnit): Int {
         if (!hasPermission()) return 0
         val ids = repo.observeFinishedSessions().first().map { it.id }
         val records = ids.mapNotNull { id -> repo.observeSessionDetail(id).first()?.let { HealthRecords.build(it, unit) } }

@@ -50,7 +50,7 @@ fun rememberDayStarter(onStarted: () -> Unit): (Long) -> Unit {
     val container = appContainer()
     val settings by container.settings.settings.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
-    var pendingDay by remember { mutableStateOf<Long?>(null) }
+    var pendingDay by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<Long?>(null) }
 
     fun start(dayId: Long, intensity: Double, readiness: Double?) {
         scope.launch { container.startFromDay(dayId, intensity, readiness); onStarted() }

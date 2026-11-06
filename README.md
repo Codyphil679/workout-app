@@ -114,6 +114,9 @@ JVM tests (Robolectric, in-memory Room) cover: workout start/prefill logic, prog
 - **The rest timer uses a `specialUse` foreground service.** That's fine for sideloading. Publishing on Google Play requires justifying that service type in the Play Console.
 - **The release build is signed with the debug key** so `assembleRelease` gives an installable APK. Set up your own signing key before publishing.
 - **Health Connect sync and recap sharing are untested on a real device** (they need Health Connect / a share target, which the JVM test environment doesn't have). The record building is unit-tested.
+- **The rest timer lives in memory.** If Android kills the app during a rest (aggressive battery managers on some phones), that rest's alert won't fire. A system alarm backstop would fix it; not done yet.
+- **"Rest before" isn't recalculated** when you un-check a set or check sets out of order.
+- **Rotating the phone closes the exercise-settings dialog** in the program editor (other key dialogs survive rotation).
 - **No cloud sync.** Use Settings → Back up everything regularly. Android's automatic device backup also includes the database if you have it enabled.
 - **The e1RM is an estimate** (Epley formula) and gets unreliable above ~10 reps.
 - **The UI is dark-only by design**, and ignores Material You wallpaper colors to keep the brand look.

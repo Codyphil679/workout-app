@@ -48,8 +48,9 @@ fun ProgramsScreen(onOpenProgram: (Long) -> Unit) {
     val repo = container.repository
     val settings by container.settings.settings.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
-    val programs by repo.observePrograms().collectAsStateWithLifecycle(null)
+    val programs by remember { repo.observePrograms() }.collectAsStateWithLifecycle(null)
     var creating by remember { mutableStateOf(false) }
+    var creatingTemplate by remember { mutableStateOf(false) }
 
     Scaffold(
         containerColor = Brand.Ink,
@@ -104,7 +105,14 @@ fun ProgramsScreen(onOpenProgram: (Long) -> Unit) {
                     style = MaterialTheme.typography.bodySmall, color = Brand.TextMid)
             }
             items(Templates.all) { t ->
-                Panel(onClick = { scope.launch { onOpenProgram(repo.createFromTemplate(t, settings.unit)) } }) {
+                Panel(onClick = {
+                    if (!creatingTemplate) {
+                        creatingTemplate = true
+                        scope.launch {
+                            try { onOpenProgram(repo.createFromTemplate(t, settings.unit)) } finally { creatingTemplate = false }
+                        }
+                    }
+                }) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         IconBadge(Icons.Rounded.AutoAwesome, tint = Brand.Ember)
                         Spacer(Modifier.width(14.dp))

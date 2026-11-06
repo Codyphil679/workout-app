@@ -40,11 +40,12 @@ object Warmups {
      */
     fun forWorkingWeight(work: Double, bar: Double, unit: WeightUnit): List<Pair<Double, Int>> {
         val step = if (unit == WeightUnit.LB) 5.0 else 2.5
-        if (work <= bar * 1.25) return emptyList()
+        if (work <= bar * 1.25 + 1e-6) return emptyList()
         val out = mutableListOf(bar to 10)
         for ((pct, reps) in listOf(0.4 to 5, 0.6 to 3, 0.8 to 2)) {
-            val w = floor(work * pct / step) * step
-            if (w > out.last().first + 1e-9 && w < work - step / 2) out += w to reps
+            // Small epsilon: weights stored in kg come back as e.g. 149.99999999999997 lb.
+            val w = floor(work * pct / step + 1e-6) * step
+            if (w > out.last().first + 1e-6 && w < work - step / 2) out += w to reps
         }
         return out
     }

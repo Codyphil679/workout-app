@@ -62,15 +62,16 @@ fun ProgramDetailScreen(programId: Long, onBack: () -> Unit, onOpenDay: (Long) -
     val container = appContainer()
     val repo = container.repository
     val scope = rememberCoroutineScope()
-    val program by repo.observeProgram(programId).collectAsStateWithLifecycle(null)
-    val days by repo.observeDays(programId).collectAsStateWithLifecycle(emptyList())
-    val active by repo.observeActiveSession().collectAsStateWithLifecycle(null)
+    val program by remember(programId) { repo.observeProgram(programId) }.collectAsStateWithLifecycle(null)
+    val days by remember(programId) { repo.observeDays(programId) }.collectAsStateWithLifecycle(emptyList())
+    val active by remember { repo.observeActiveSession() }.collectAsStateWithLifecycle(null)
     var addingDay by remember { mutableStateOf(false) }
     val startDay = rememberDayStarter(onStarted = onStartWorkout)
     var renaming by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
-    var loaded by remember { mutableStateOf(false) }
+    // Saveable so a back-stack entry whose data was deleted closes itself instead of rendering blank.
+    var loaded by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(program) {
         if (program != null) loaded = true else if (loaded) onBack()

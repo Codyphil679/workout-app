@@ -19,6 +19,11 @@ class AppContainer(app: Application) {
     /** For work that should outlive a screen (e.g. syncing after a workout ends). */
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    /** Fire-and-forget removal from Health Connect when a workout is deleted, if sync is on. */
+    fun deleteFromHealth(sessionId: Long) {
+        if (settings.settings.value.healthConnectSync) appScope.launch { health.deleteSession(sessionId) }
+    }
+
     /** Fire-and-forget Health Connect sync of one workout, if the user turned sync on. */
     fun syncToHealth(sessionId: Long) {
         val s = settings.settings.value
@@ -37,6 +42,14 @@ class LiftLogApp : Application() {
     override fun onCreate() {
         super.onCreate()
         container = AppContainer(this)
-        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch { container.repository.seedIfEmpty() }
+        // Seed built-in exercises once per seed version; re-seeding every launch would resurrect
+        // built-ins the user deliberately renamed or deleted.
+        val prefs = getSharedPreferences("app", MODE_PRIVATE)
+        if (prefs.getInt("seedVersion", 0) < com.codyphil.liftlog.data.Seed.VERSION) {
+            CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+                container.repository.seedIfEmpty()
+                prefs.edit().putInt("seedVersion", com.codyphil.liftlog.data.Seed.VERSION).apply()
+            }
+        }
     }
 }

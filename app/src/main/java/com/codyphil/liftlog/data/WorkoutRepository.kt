@@ -25,7 +25,10 @@ class WorkoutRepository(
     private val historyDao = db.historyDao()
     private val bodyDao = db.bodyDao()
 
-    /** Adds missing built-in exercises and fills in muscle groups for ones created before muscles existed. */
+    /**
+     * Adds missing built-in exercises and fills in muscle groups for ones created before muscles existed.
+     * The app calls this once per [Seed.VERSION] (see LiftLogApp), so renamed or deleted built-ins stay that way.
+     */
     suspend fun seedIfEmpty() = db.withTransaction {
         for ((name, muscle) in Seed.muscles) {
             if (exerciseDao.findByName(name) == null) exerciseDao.insertIgnore(Exercise(name = name, muscle = muscle))
@@ -64,7 +67,7 @@ class WorkoutRepository(
 
     /** 90% of the best estimated 1RM in your history, as a starting training max. Null without history. */
     suspend fun suggestedTrainingMax(exerciseId: Long, unit: WeightUnit): Double? =
-        historyDao.bestE1rm(exerciseId)?.let { TrainingMax.fromE1rm(it, unit) }
+        historyDao.bestE1rm(exerciseId)?.takeIf { it > 0 }?.let { TrainingMax.fromE1rm(it, unit) }?.takeIf { it > 0 }
 
     /**
      * Saves a new training max and recalculates the unfinished working sets of that exercise
@@ -297,9 +300,10 @@ class WorkoutRepository(
             sessionId
         }
 
-    /** Lighter-day scaling, rounded down to a loadable weight. */
+    /** Lighter-day scaling, rounded down to a loadable weight (never down to nothing). */
     private fun lighter(kg: Double, intensity: Double, unit: WeightUnit): Double =
-        if (intensity >= 0.999 || kg <= 0) kg else Progressions.roundDownLoadable(kg * intensity, unit)
+        if (intensity >= 0.999 || kg <= 0) kg
+        else Progressions.roundDownLoadable(kg * intensity, unit).takeIf { it > 0 } ?: kg
 
     private suspend fun planFor(de: DayExercise, unit: WeightUnit): Plan {
         val recent = historyDao.recentSessionSets(de.exerciseId, 2)
@@ -347,7 +351,8 @@ class WorkoutRepository(
                 position = sessionDao.nextExercisePosition(sessionId), restSeconds = restSeconds,
             )
         )
-        val last = historyDao.lastSessionSets(exerciseId)
+        // Prefer the last normal workout; a lighter day's reduced weights aren't a good starting point.
+        val last = historyDao.recentSessionSets(exerciseId, 1).ifEmpty { historyDao.lastSessionSets(exerciseId) }
         val sets = if (last.isEmpty()) listOf(SetLog(sessionExerciseId = seId, setNumber = 1, weightKg = 0.0, reps = 0))
         else last.mapIndexed { i, s -> SetLog(sessionExerciseId = seId, setNumber = i + 1, weightKg = s.weightKg, reps = s.reps) }
         sessionDao.insertSets(sets)
@@ -426,25 +431,14 @@ class WorkoutRepository(
         sessionDao.updateSets(remaining.mapIndexed { i, s -> s.copy(setNumber = i + 1) })
     }
 
-    suspend fun updateSetValues(setId: Long, weightKg: Double, reps: Int) {
-        val set = sessionDao.getSet(setId) ?: return
-        if (set.weightKg != weightKg || set.reps != reps) sessionDao.updateSet(set.copy(weightKg = weightKg, reps = reps))
-    }
+    /** Typing in a set row. Ignored once the set is completed, so a late keystroke can't undo a check mark. */
+    suspend fun updateSetValues(setId: Long, weightKg: Double, reps: Int) = sessionDao.setValues(setId, weightKg, reps)
 
-    suspend fun setSetType(setId: Long, type: SetType) {
-        val set = sessionDao.getSet(setId) ?: return
-        sessionDao.updateSet(set.copy(setType = type))
-    }
+    suspend fun setSetType(setId: Long, type: SetType) = sessionDao.setType(setId, type)
 
-    suspend fun setAmrap(setId: Long, amrap: Boolean) {
-        val set = sessionDao.getSet(setId) ?: return
-        sessionDao.updateSet(set.copy(amrap = amrap, targetReps = if (amrap) (set.targetReps ?: set.reps) else null))
-    }
+    suspend fun setAmrap(setId: Long, amrap: Boolean) = sessionDao.setAmrap(setId, amrap)
 
-    suspend fun setSetRpe(setId: Long, rpe: Double?) {
-        val set = sessionDao.getSet(setId) ?: return
-        sessionDao.updateSet(set.copy(rpe = rpe))
-    }
+    suspend fun setSetRpe(setId: Long, rpe: Double?) = sessionDao.setRpe(setId, rpe)
 
     /**
      * Marks a set done. Returns the rest time (seconds) configured for its exercise so the caller can start the timer,
@@ -452,6 +446,7 @@ class WorkoutRepository(
      */
     suspend fun completeSet(setId: Long, weightKg: Double, reps: Int): Int? = db.withTransaction {
         val set = sessionDao.getSet(setId) ?: return@withTransaction null
+        if (set.completed) return@withTransaction null // double tap: don't move completedAt or restart rest
         val se = sessionDao.getSessionExercise(set.sessionExerciseId) ?: return@withTransaction null
         val now = clock()
         val previous = sessionDao.lastCompletedAt(se.sessionId)
@@ -464,23 +459,27 @@ class WorkoutRepository(
         se.restSeconds
     }
 
-    suspend fun uncompleteSet(setId: Long) {
-        val set = sessionDao.getSet(setId) ?: return
-        sessionDao.updateSet(set.copy(completed = false, completedAt = null, restBeforeSeconds = null))
-    }
+    suspend fun uncompleteSet(setId: Long) = sessionDao.uncomplete(setId)
 
     /**
      * Ends the workout: drops unfinished sets and empty exercises. Returns false (and changes nothing)
      * when there are no completed sets, so the UI can offer to discard instead.
      */
     suspend fun finishSession(sessionId: Long, unit: WeightUnit = WeightUnit.LB): Boolean = db.withTransaction {
-        if (sessionDao.lastCompletedAt(sessionId) == null) return@withTransaction false
+        val session = sessionDao.get(sessionId) ?: return@withTransaction false
+        if (session.endedAt != null) return@withTransaction true // already finished: never apply training-max changes twice
+        // Only warm-ups checked off doesn't count as a workout.
+        if (sessionDao.completedWorkingSets(sessionId) == 0) return@withTransaction false
         sessionDao.deleteIncompleteSets(sessionId)
         sessionDao.deleteEmptySessionExercises(sessionId)
-        val session = sessionDao.get(sessionId) ?: return@withTransaction false
-        val items = Supersets.dissolveSingletons(sessionDao.getSessionExercises(sessionId), { it.supersetGroup }) {
+        val dissolved = Supersets.dissolveSingletons(sessionDao.getSessionExercises(sessionId), { it.supersetGroup }) {
             it.copy(supersetGroup = null)
-        }.map { se -> if (session.intensity >= 0.999) updateTrainingMax(se, unit) ?: se else se }
+        }
+        // Training max moves once per exercise, from the last time it appears with an AMRAP set.
+        val tmRows = if (session.intensity < 0.999) emptySet() else dissolved
+            .filter { se -> sessionDao.getSets(se.id).any { it.amrap && it.completed && it.setType != SetType.WARMUP } }
+            .groupBy { it.exerciseId }.values.map { it.last().id }.toSet()
+        val items = dissolved.map { se -> if (se.id in tmRows) updateTrainingMax(se, unit) ?: se else se }
         sessionDao.updateSessionExercises(items)
         sessionDao.update(session.copy(endedAt = clock()))
         true

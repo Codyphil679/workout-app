@@ -49,7 +49,7 @@ fun rememberRecovery(): List<MuscleRecovery> {
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) { while (true) { delay(60_000); now = System.currentTimeMillis() } }
     val since = remember(now / 3_600_000) { now - WEEK }
-    val events by repo.observeMuscleEvents(since).collectAsStateWithLifecycle(emptyList())
+    val events by remember(since) { repo.observeMuscleEvents(since) }.collectAsStateWithLifecycle(emptyList())
     return remember(events, now) { Recovery.compute(events, now) }
 }
 

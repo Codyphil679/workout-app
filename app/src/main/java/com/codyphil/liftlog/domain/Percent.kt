@@ -57,7 +57,7 @@ object TrainingMax {
         fun f(kg: Double) = Units.formatWithUnit(kg, unit)
         return when {
             actual < target -> {
-                val next = Progressions.roundDownLoadable(tmKg * 0.9, unit)
+                val next = Progressions.roundDownLoadable(tmKg * 0.9, unit).takeIf { it > 0 } ?: tmKg
                 Change(next, "Training max ${f(tmKg)} → ${f(next)}: $actual of $target reps on the AMRAP set")
             }
             actual >= target + 5 -> {

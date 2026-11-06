@@ -39,6 +39,7 @@ class RestTimerService : Service() {
     private var countdownJob: Job? = null
     private var observeJob: Job? = null
     private var wakeLock: PowerManager.WakeLock? = null
+    private var lastStartId = 0
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -48,6 +49,7 @@ class RestTimerService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        lastStartId = startId
         when (intent?.action) {
             ACTION_ADD -> RestTimer.adjust(15)
             ACTION_SKIP -> RestTimer.skip()
@@ -107,7 +109,14 @@ class RestTimerService : Service() {
         } else {
             getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
         }
-        vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 400, 200, 400, 200, 600), -1))
+        val effect = VibrationEffect.createWaveform(longArrayOf(0, 400, 200, 400, 200, 600), -1)
+        // Mark it as an alarm so battery saver / "touch vibration off" don't swallow the only alert
+        // the user gets when notifications are disabled.
+        if (Build.VERSION.SDK_INT >= 33) {
+            vibrator.vibrate(effect, android.os.VibrationAttributes.createForUsage(android.os.VibrationAttributes.USAGE_ALARM))
+        } else {
+            vibrator.vibrate(effect, AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).build())
+        }
     }
 
     private fun runningNotification(state: RestState?): Notification {
@@ -162,7 +171,8 @@ class RestTimerService : Service() {
         countdownJob?.cancel()
         wakeLock?.takeIf { it.isHeld }?.release()
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
-        stopSelf()
+        // Only stop if no newer start is pending; a pending startForegroundService() must still get its startForeground().
+        stopSelf(lastStartId)
     }
 
     override fun onDestroy() {

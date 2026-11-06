@@ -59,10 +59,11 @@ fun ProgressScreen(onOpenExercise: (Long) -> Unit, onOpenBody: () -> Unit) {
     val container = appContainer()
     val repo = container.repository
     val settings by container.settings.settings.collectAsStateWithLifecycle()
-    val list by repo.observeExercisesWithHistory().collectAsStateWithLifecycle(null)
-    val weekStart = remember { startOfWeek() }
-    val muscleSets by repo.observeMuscleSets(weekStart).collectAsStateWithLifecycle(emptyList())
-    val bodyWeights by repo.observeBody(BodyMetric.BODY_WEIGHT).collectAsStateWithLifecycle(emptyList())
+    val list by remember { repo.observeExercisesWithHistory() }.collectAsStateWithLifecycle(null)
+    val today = com.codyphil.liftlog.ui.components.rememberToday()
+    val weekStart = remember(today) { startOfWeek() }
+    val muscleSets by remember(weekStart) { repo.observeMuscleSets(weekStart) }.collectAsStateWithLifecycle(emptyList())
+    val bodyWeights by remember(BodyMetric.BODY_WEIGHT) { repo.observeBody(BodyMetric.BODY_WEIGHT) }.collectAsStateWithLifecycle(emptyList())
     var query by remember { mutableStateOf("") }
     val items = list ?: return
     val filtered = items.filter { it.name.contains(query.trim(), ignoreCase = true) }

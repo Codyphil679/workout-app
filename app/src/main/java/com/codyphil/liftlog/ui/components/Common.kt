@@ -248,7 +248,7 @@ fun NumberField(
 ) {
     OutlinedTextField(
         value = value,
-        onValueChange = { new -> if (new.length <= 7 && new.all { it.isDigit() || (decimal && (it == '.' || it == ',')) }) onValueChange(new) },
+        onValueChange = { new -> if (isValidNumberInput(new, decimal, maxLength = 7)) onValueChange(new) },
         label = { Text(label) },
         singleLine = true,
         suffix = suffix?.let { { Text(it) } },
@@ -257,3 +257,23 @@ fun NumberField(
         textStyle = MaterialTheme.typography.bodyLarge.merge(Numeric),
     )
 }
+
+/**
+ * The current day (as yyyyDDD). Updates within a minute when the date changes, so "this week" style
+ * screens don't keep using last week's start after the app sat open in the background.
+ */
+@Composable
+fun rememberToday(): Int {
+    val day = androidx.compose.runtime.produceState(dayKey()) {
+        while (true) { kotlinx.coroutines.delay(60_000); value = dayKey() }
+    }
+    return day.value
+}
+
+private fun dayKey(): Int = java.util.Calendar.getInstance().let { it.get(java.util.Calendar.YEAR) * 1000 + it.get(java.util.Calendar.DAY_OF_YEAR) }
+
+/** ASCII digits only, plus at most one decimal separator ('.' or ','). */
+fun isValidNumberInput(text: String, decimal: Boolean, maxLength: Int): Boolean =
+    text.length <= maxLength &&
+        text.all { it in '0'..'9' || (decimal && (it == '.' || it == ',')) } &&
+        text.count { it == '.' || it == ',' } <= 1

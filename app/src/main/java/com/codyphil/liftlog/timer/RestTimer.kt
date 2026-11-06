@@ -42,7 +42,7 @@ object RestTimer {
         _state.value = null
     }
 
-    internal fun finished(expected: RestState) {
+    fun finished(expected: RestState) {
         _state.compareAndSet(expected, null)
     }
 }

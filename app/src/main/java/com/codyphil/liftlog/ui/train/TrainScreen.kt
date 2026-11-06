@@ -57,6 +57,7 @@ import com.codyphil.liftlog.domain.Units
 import com.codyphil.liftlog.ui.appContainer
 import com.codyphil.liftlog.ui.components.Eyebrow
 import com.codyphil.liftlog.ui.components.rememberDayStarter
+import com.codyphil.liftlog.ui.components.rememberToday
 import com.codyphil.liftlog.ui.recovery.rememberRecovery
 import com.codyphil.liftlog.ui.components.IconBadge
 import com.codyphil.liftlog.ui.components.Panel
@@ -80,11 +81,12 @@ fun TrainScreen(
     val repo = container.repository
     val scope = rememberCoroutineScope()
     val settings by container.settings.settings.collectAsStateWithLifecycle()
-    val active by repo.observeActiveSession().collectAsStateWithLifecycle(null)
-    val days by repo.observeAllDays().collectAsStateWithLifecycle(emptyList())
-    val sessions by repo.observeFinishedSessions().collectAsStateWithLifecycle(emptyList())
+    val active by remember { repo.observeActiveSession() }.collectAsStateWithLifecycle(null)
+    val days by remember { repo.observeAllDays() }.collectAsStateWithLifecycle(emptyList())
+    val sessions by remember { repo.observeFinishedSessions() }.collectAsStateWithLifecycle(emptyList())
 
-    val weekStart = remember { startOfWeek() }
+    val today = rememberToday()
+    val weekStart = remember(today) { startOfWeek() }
     val thisWeek = sessions.filter { it.startedAt >= weekStart }
     val upNext = remember(days, sessions) { upNext(days, sessions) }
     val recovery = rememberRecovery()

@@ -70,16 +70,16 @@ fun SettingsScreen() {
     val settings by container.settings.settings.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var pendingImport by remember { mutableStateOf<Uri?>(null) }
+    var pendingImport by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<Uri?>(null) }
     val stamp = remember { SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date()) }
 
     val exportJson = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
-        if (uri != null) scope.launch {
+        if (uri != null) container.appScope.launch {
             runIo(context, "Backup saved") { writeText(context, uri, container.backup.exportJson()) }
         }
     }
     val exportCsv = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
-        if (uri != null) scope.launch {
+        if (uri != null) container.appScope.launch {
             runIo(context, "CSV exported") { writeText(context, uri, container.backup.exportCsv(settings.unit)) }
         }
     }
@@ -215,13 +215,13 @@ fun SettingsScreen() {
             onDismiss = { pendingImport = null },
             onConfirm = {
                 pendingImport = null
-                scope.launch {
+                container.appScope.launch {
                     runIo(context, null) {
                         val text = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
                             ?: error("Couldn't read that file")
                         val r = container.backup.importJson(text)
                         withContext(Dispatchers.Main) {
-                            Toast.makeText(context, "Restored ${r.programs} programs and ${r.workouts} workouts", Toast.LENGTH_LONG).show()
+                            Toast.makeText(context.applicationContext, "Restored ${r.programs} programs and ${r.workouts} workouts", Toast.LENGTH_LONG).show()
                         }
                     }
                 }
@@ -253,7 +253,7 @@ private fun writeText(context: Context, uri: Uri, text: String) {
 private suspend fun runIo(context: Context, success: String?, block: suspend () -> Unit) {
     val result = withContext(Dispatchers.IO) { runCatching { block() } }
     val msg = result.fold({ success }, { "Failed: ${it.message ?: it.javaClass.simpleName}" })
-    if (msg != null) Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+    if (msg != null) withContext(Dispatchers.Main) { Toast.makeText(context.applicationContext, msg, Toast.LENGTH_LONG).show() }
 }
 
 @Composable
@@ -263,7 +263,12 @@ private fun HealthConnectPanel() {
     val settings by container.settings.settings.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val availability = remember { health.availability() }
+    var availability by remember { mutableStateOf(health.availability()) }
+    // Re-check when coming back, e.g. after installing Health Connect from the Play Store.
+    androidx.lifecycle.compose.LifecycleResumeEffect(Unit) {
+        availability = health.availability()
+        onPauseOrDispose { }
+    }
     var syncing by remember { mutableStateOf(false) }
 
     fun syncAll() {

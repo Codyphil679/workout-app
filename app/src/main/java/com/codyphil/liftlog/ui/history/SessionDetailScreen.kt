@@ -65,9 +65,10 @@ fun SessionDetailScreen(sessionId: Long, onBack: () -> Unit, onOpenExercise: (Lo
     val repo = container.repository
     val scope = rememberCoroutineScope()
     val settings by container.settings.settings.collectAsStateWithLifecycle()
-    val detail by repo.observeSessionDetail(sessionId).collectAsStateWithLifecycle(null)
+    val detail by remember(sessionId) { repo.observeSessionDetail(sessionId) }.collectAsStateWithLifecycle(null)
     var confirmDelete by remember { mutableStateOf(false) }
-    var loaded by remember { mutableStateOf(false) }
+    // Saveable so a back-stack entry whose data was deleted closes itself instead of rendering blank.
+    var loaded by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(detail) { if (detail != null) loaded = true else if (loaded) onBack() }
     val d = detail ?: return
     val s = d.session
@@ -126,7 +127,10 @@ fun SessionDetailScreen(sessionId: Long, onBack: () -> Unit, onOpenExercise: (Lo
             message = "It will be removed from your history and progress charts. This can't be undone.",
             confirmText = "Delete",
             onDismiss = { confirmDelete = false },
-            onConfirm = { confirmDelete = false; scope.launch { repo.deleteSession(sessionId) } },
+            onConfirm = {
+                confirmDelete = false
+                scope.launch { repo.deleteSession(sessionId); container.deleteFromHealth(sessionId) }
+            },
         )
     }
 }

@@ -82,18 +82,20 @@ private data class EditTarget(val exerciseId: Long, val name: String, val existi
 @Composable
 fun DayEditorScreen(dayId: Long, onBack: () -> Unit, onStartWorkout: () -> Unit) {
     val container = appContainer()
+    val context = androidx.compose.ui.platform.LocalContext.current
     val repo = container.repository
     val scope = rememberCoroutineScope()
     val settings by container.settings.settings.collectAsStateWithLifecycle()
-    val day by repo.observeDay(dayId).collectAsStateWithLifecycle(null)
-    val items by repo.observeDayExercises(dayId).collectAsStateWithLifecycle(emptyList())
-    val exercises by repo.observeExercises().collectAsStateWithLifecycle(emptyList())
-    val active by repo.observeActiveSession().collectAsStateWithLifecycle(null)
+    val day by remember(dayId) { repo.observeDay(dayId) }.collectAsStateWithLifecycle(null)
+    val items by remember(dayId) { repo.observeDayExercises(dayId) }.collectAsStateWithLifecycle(emptyList())
+    val exercises by remember { repo.observeExercises() }.collectAsStateWithLifecycle(emptyList())
+    val active by remember { repo.observeActiveSession() }.collectAsStateWithLifecycle(null)
     var picker by remember { mutableStateOf(false) }
     val startDay = rememberDayStarter(onStarted = onStartWorkout)
     var editing by remember { mutableStateOf<EditTarget?>(null) }
     var renaming by remember { mutableStateOf(false) }
-    var loaded by remember { mutableStateOf(false) }
+    // Saveable so a back-stack entry whose data was deleted closes itself instead of rendering blank.
+    var loaded by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(day) { if (day != null) loaded = true else if (loaded) onBack() }
     val d = day ?: return
@@ -165,7 +167,13 @@ fun DayEditorScreen(dayId: Long, onBack: () -> Unit, onStartWorkout: () -> Unit)
                 picker = false
                 scope.launch { editing = EditTarget(repo.getOrCreateExercise(name), name, null) }
             },
-            onDelete = { ex -> scope.launch { repo.deleteExerciseIfUnused(ex.id) } },
+            onDelete = { ex ->
+                scope.launch {
+                    if (!repo.deleteExerciseIfUnused(ex.id)) {
+                        android.widget.Toast.makeText(context, "${ex.name} is used in a program or workout, so it can't be deleted", android.widget.Toast.LENGTH_LONG).show()
+                    }
+                }
+            },
         )
     }
     editing?.let { target ->
@@ -195,9 +203,8 @@ fun DayEditorScreen(dayId: Long, onBack: () -> Unit, onStartWorkout: () -> Unit)
                 val sets = if (parsed.isNotEmpty()) parsed.size else v.sets
                 val reps = parsed.firstOrNull()?.reps ?: v.reps
                 scope.launch {
-                    if (v.progression == Progression.PERCENT && v.trainingMaxKg != null) {
-                        repo.setTrainingMax(target.exerciseId, v.trainingMaxKg)
-                    }
+                    // An emptied field clears the training max (it's then seeded from history next time).
+                    if (v.progression == Progression.PERCENT) repo.setTrainingMax(target.exerciseId, v.trainingMaxKg)
                     if (e == null) repo.addDayExercise(dayId, target.exerciseId, sets, reps, v.weightKg, v.rest,
                         v.progression, v.incrementKg, repMax, v.autoWarmup, percentScheme = scheme)
                     else repo.updateDayExercise(e.id, dayId, sets, reps, v.weightKg, v.rest,
@@ -301,9 +308,10 @@ private fun TargetDialog(
     var tmText by remember { mutableStateOf(initial.trainingMaxKg?.let { Units.format(it, unit) } ?: "") }
     // Increment is edited in the display unit, in 2.5 lb / 1.25 kg steps.
     val incStep = if (unit == WeightUnit.LB) 2.5 else 1.25
-    var incSteps by remember {
-        mutableIntStateOf((Units.fromKg(initial.incrementKg, unit) / incStep).roundToInt().coerceAtLeast(1))
-    }
+    val initialSteps = remember { (Units.fromKg(initial.incrementKg, unit) / incStep).roundToInt().coerceAtLeast(1) }
+    var incSteps by remember { mutableIntStateOf(initialSteps) }
+    val weightInvalid = weight.isNotBlank() && Units.parse(weight) == null
+    val tmInvalid = progression == Progression.PERCENT && tmText.isNotBlank() && Units.parse(tmText)?.takeIf { it > 0 } == null
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
@@ -377,11 +385,13 @@ private fun TargetDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = {
+            TextButton(enabled = !weightInvalid && !tmInvalid, onClick = {
                 onSave(
                     TargetValues(
                         sets, reps, repMax, Units.toKg(Units.parse(weight) ?: 0.0, unit), rest, progression,
-                        Units.toKg(incSteps * incStep, unit), autoWarmup,
+                        // Keep the stored increment exactly unless it was changed here; re-rounding it to
+                        // 2.5 lb / 1.25 kg steps on every save would drift it after a unit switch.
+                        if (incSteps == initialSteps) initial.incrementKg else Units.toKg(incSteps * incStep, unit), autoWarmup,
                         PercentScheme.format(scheme.ifEmpty { PercentScheme.parse(PercentScheme.presets.first().second) }),
                         Units.parse(tmText)?.takeIf { it > 0 }?.let { Units.toKg(it, unit) },
                     )

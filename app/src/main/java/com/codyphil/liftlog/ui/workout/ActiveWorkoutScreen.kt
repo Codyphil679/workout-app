@@ -61,6 +61,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
+import com.codyphil.liftlog.ui.components.isValidNumberInput
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
@@ -107,7 +109,7 @@ fun ActiveWorkoutScreen(onBack: () -> Unit, onFinished: (Long) -> Unit, onOpenEx
     val settings by vm.settings.collectAsStateWithLifecycle()
     val lastTime by vm.lastTime.collectAsStateWithLifecycle()
     val rest by RestTimer.state.collectAsStateWithLifecycle()
-    val exercises by vm.repo.observeExercises().collectAsStateWithLifecycle(emptyList())
+    val exercises by remember { vm.repo.observeExercises() }.collectAsStateWithLifecycle(emptyList())
     val context = LocalContext.current
 
     var showPicker by remember { mutableStateOf(false) }
@@ -119,6 +121,7 @@ fun ActiveWorkoutScreen(onBack: () -> Unit, onFinished: (Long) -> Unit, onOpenEx
     var finishing by remember { mutableStateOf(false) }
     var plateFor by remember { mutableStateOf<Double?>(null) }
     var tmFor by remember { mutableStateOf<SessionExerciseWithSets?>(null) }
+    val togglesInFlight = remember { mutableSetOf<Long>() }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
 
@@ -208,7 +211,8 @@ fun ActiveWorkoutScreen(onBack: () -> Unit, onFinished: (Long) -> Unit, onOpenEx
                         onTrainingMax = { tmFor = ex },
                         onEditSet = { id, w, r -> vm.launch { vm.repo.updateSetValues(id, w, r) } },
                         onToggleSet = { set, w, r ->
-                            vm.launch {
+                            if (togglesInFlight.add(set.id)) vm.launch {
+                                try {
                                 if (set.completed) vm.repo.uncompleteSet(set.id)
                                 else {
                                     val restSecs = vm.repo.completeSet(set.id, w, r)
@@ -217,11 +221,14 @@ fun ActiveWorkoutScreen(onBack: () -> Unit, onFinished: (Long) -> Unit, onOpenEx
                                         val target = detail.exercises.indexOfFirst { it.row.id == flow.goTo.row.id }
                                         if (target >= 0) scope.launch { listState.animateScrollToItem(target) }
                                     }
-                                    if (flow.rest && restSecs != null && settings.autoStartRest) {
+                                    if (restSecs == null) { /* already completed (double tap) or deleted */ }
+                                    else if (!flow.rest) RestTimer.skip() // straight into the next superset exercise
+                                    else if (settings.autoStartRest) {
                                         val secs = if (set.setType == SetType.WARMUP) minOf(restSecs, 60) else restSecs
                                         RestTimer.start(context, secs, flow.label)
                                     }
                                 }
+                                } finally { togglesInFlight.remove(set.id) }
                             }
                         },
                     )
@@ -264,7 +271,13 @@ fun ActiveWorkoutScreen(onBack: () -> Unit, onFinished: (Long) -> Unit, onOpenEx
                     vm.repo.addExerciseToSession(session.id, id, settings.defaultRestSeconds)
                 }
             },
-            onDelete = { ex -> vm.launch { vm.repo.deleteExerciseIfUnused(ex.id) } },
+            onDelete = { ex ->
+                vm.launch {
+                    if (!vm.repo.deleteExerciseIfUnused(ex.id)) {
+                        Toast.makeText(context, "${ex.name} is used in a program or workout, so it can't be deleted", Toast.LENGTH_LONG).show()
+                    }
+                }
+            },
         )
     }
     tmFor?.let { ex ->
@@ -296,6 +309,7 @@ fun ActiveWorkoutScreen(onBack: () -> Unit, onFinished: (Long) -> Unit, onOpenEx
             destructive = false,
             onDismiss = { confirmFinish = false },
             onConfirm = {
+                if (finishing) return@ConfirmDialog
                 confirmFinish = false
                 finishing = true
                 vm.launch {
@@ -558,6 +572,18 @@ private fun SetRow(
 ) {
     var weight by remember(set.id, unit) { mutableStateOf(if (set.weightKg == 0.0) "" else Units.format(set.weightKg, unit)) }
     var reps by remember(set.id) { mutableStateOf(if (set.reps == 0) "" else set.reps.toString()) }
+    var weightFocused by remember { mutableStateOf(false) }
+    var repsFocused by remember { mutableStateOf(false) }
+    // While you're typing, the field is the source of truth. Otherwise follow the database, so changes made
+    // elsewhere (training max recalculation, "Prev" copy, warm-ups) show up instead of being overwritten.
+    LaunchedEffect(set.weightKg, weightFocused, unit) {
+        if (!weightFocused && Units.toKg(Units.parse(weight) ?: 0.0, unit).let { kotlin.math.abs(it - set.weightKg) > 1e-6 }) {
+            weight = if (set.weightKg == 0.0) "" else Units.format(set.weightKg, unit)
+        }
+    }
+    LaunchedEffect(set.reps, repsFocused) {
+        if (!repsFocused && (reps.toIntOrNull() ?: 0) != set.reps) reps = if (set.reps == 0) "" else set.reps.toString()
+    }
     var menu by remember { mutableStateOf(false) }
     var rpeDialog by remember { mutableStateOf(false) }
     val focus = LocalFocusManager.current
@@ -565,6 +591,8 @@ private fun SetRow(
 
     fun weightKg() = Units.toKg(Units.parse(weight) ?: 0.0, unit)
     fun repsInt() = reps.toIntOrNull() ?: 0
+    // Empty is fine (bodyweight moves), but something like "." must be fixed before the set can be checked off.
+    val weightInvalid = weight.isNotBlank() && Units.parse(weight) == null
 
     val (marker, markerColor) = when (set.setType) {
         SetType.WARMUP -> "W" to Brand.Ember
@@ -616,9 +644,11 @@ private fun SetRow(
             maxLines = 1,
         )
         CellField(weight, { weight = it; onEdit(set.id, weightKg(), repsInt()) }, decimal = true, enabled = !set.completed,
-            placeholder = "0", modifier = Modifier.width(widths.weight))
+            placeholder = "0", modifier = Modifier.width(widths.weight), onFocus = { weightFocused = it },
+            error = weightInvalid)
         Spacer(Modifier.width(6.dp))
         CellField(reps, { reps = it; onEdit(set.id, weightKg(), repsInt()) }, decimal = false, enabled = !set.completed,
+            onFocus = { repsFocused = it },
             placeholder = set.targetReps?.let { "$it+" } ?: "0", modifier = Modifier.width(widths.reps))
         if (trackRpe) {
             Spacer(Modifier.width(6.dp))
@@ -636,7 +666,7 @@ private fun SetRow(
             }
         }
         Spacer(Modifier.width(6.dp))
-        val canComplete = set.completed || repsInt() > 0
+        val canComplete = set.completed || (repsInt() > 0 && !weightInvalid)
         Box(
             Modifier.size(44.dp).clip(RoundedCornerShape(12.dp))
                 .background(if (set.completed) Brand.Volt else Brand.PanelHigher)
@@ -666,13 +696,13 @@ private fun CellField(
     enabled: Boolean,
     placeholder: String,
     modifier: Modifier = Modifier,
+    onFocus: (Boolean) -> Unit = {},
+    error: Boolean = false,
 ) {
     val shape = RoundedCornerShape(12.dp)
     BasicTextField(
         value = value,
-        onValueChange = { new ->
-            if (new.length <= 6 && new.all { it.isDigit() || (decimal && (it == '.' || it == ',')) }) onChange(new)
-        },
+        onValueChange = { new -> if (isValidNumberInput(new, decimal, maxLength = 6)) onChange(new) },
         enabled = enabled,
         singleLine = true,
         textStyle = MaterialTheme.typography.titleMedium.merge(Numeric).copy(
@@ -683,12 +713,12 @@ private fun CellField(
             keyboardType = if (decimal) KeyboardType.Decimal else KeyboardType.Number,
             imeAction = ImeAction.Next,
         ),
-        modifier = modifier.height(44.dp),
+        modifier = modifier.height(44.dp).onFocusChanged { onFocus(it.isFocused) },
         decorationBox = { inner ->
             Box(
                 Modifier.fillMaxSize().clip(shape)
                     .background(if (enabled) Brand.PanelHigh else Color.Transparent)
-                    .border(1.dp, if (enabled) Brand.Line else Color.Transparent, shape),
+                    .border(1.dp, if (!enabled) Color.Transparent else if (error) Brand.Danger else Brand.Line, shape),
                 contentAlignment = Alignment.Center,
             ) {
                 if (value.isEmpty()) Text(placeholder, color = Brand.TextLow, style = MaterialTheme.typography.titleMedium)

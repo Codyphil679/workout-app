@@ -88,7 +88,8 @@ fun RecapScreen(onBack: () -> Unit, initialMonth: Long = defaultRecapMonth()) {
     val scope = rememberCoroutineScope()
     var month by rememberSaveable { mutableLongStateOf(initialMonth) }
     var recap by remember { mutableStateOf<MonthRecap?>(null) }
-    val thisMonth = remember { Calendar.getInstance().let { Recaps.monthStart(it.get(Calendar.YEAR), it.get(Calendar.MONTH)) } }
+    val today = com.codyphil.liftlog.ui.components.rememberToday()
+    val thisMonth = remember(today) { Calendar.getInstance().let { Recaps.monthStart(it.get(Calendar.YEAR), it.get(Calendar.MONTH)) } }
     val layer = rememberGraphicsLayer()
 
     LaunchedEffect(month) {
