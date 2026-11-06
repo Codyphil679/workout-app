@@ -1,8 +1,10 @@
 package com.codyphil.liftlog.data
 
 import androidx.room.withTransaction
+import com.codyphil.liftlog.domain.PercentScheme
 import com.codyphil.liftlog.domain.Plan
 import com.codyphil.liftlog.domain.ProgressionConfig
+import com.codyphil.liftlog.domain.TrainingMax
 import com.codyphil.liftlog.domain.Progressions
 import com.codyphil.liftlog.domain.Units
 import com.codyphil.liftlog.domain.Warmups
@@ -58,6 +60,33 @@ class WorkoutRepository(
 
     suspend fun setExerciseMuscle(id: Long, muscle: Muscle) = exerciseDao.setMuscle(id, muscle)
 
+    suspend fun setTrainingMax(exerciseId: Long, kg: Double?) = exerciseDao.setTrainingMax(exerciseId, kg)
+
+    /** 90% of the best estimated 1RM in your history, as a starting training max. Null without history. */
+    suspend fun suggestedTrainingMax(exerciseId: Long, unit: WeightUnit): Double? =
+        historyDao.bestE1rm(exerciseId)?.let { TrainingMax.fromE1rm(it, unit) }
+
+    /**
+     * Saves a new training max and recalculates the unfinished working sets of that exercise
+     * in the given workout from its % scheme.
+     */
+    suspend fun applyTrainingMax(sessionExerciseId: Long, kg: Double, unit: WeightUnit) = db.withTransaction {
+        val se = sessionDao.getSessionExercise(sessionExerciseId) ?: return@withTransaction
+        exerciseDao.setTrainingMax(se.exerciseId, kg)
+        val scheme = PercentScheme.parse(se.percentScheme)
+        if (scheme.isEmpty()) return@withTransaction
+        val session = sessionDao.get(se.sessionId)
+        val intensity = session?.intensity ?: 1.0
+        val working = sessionDao.getSets(sessionExerciseId).filter { it.setType != SetType.WARMUP }
+        sessionDao.updateSets(working.mapIndexedNotNull { i, set ->
+            val ps = scheme.getOrNull(i) ?: return@mapIndexedNotNull null
+            if (set.completed) null
+            else set.copy(weightKg = lighter(PercentScheme.weightFor(kg, ps.percent, unit), intensity, unit))
+        })
+        sessionDao.updateSessionExercises(listOf(se.copy(note = "Training max ${Units.formatWithUnit(kg, unit)}" +
+            if (scheme.any { it.amrap }) " · + set: as many reps as you can" else "")))
+    }
+
     /** Only deletes exercises that are not referenced by any program or workout. */
     suspend fun deleteExerciseIfUnused(id: Long): Boolean = db.withTransaction {
         if (exerciseDao.usageCount(id) > 0) false else {
@@ -91,6 +120,7 @@ class WorkoutRepository(
                     repMax = if (progression == Progression.DOUBLE) item.repMax ?: (item.reps + 4) else null,
                     autoWarmup = item.autoWarmup,
                     supersetGroup = item.superset,
+                    percentScheme = item.percentScheme,
                 )
             }
         }
@@ -134,13 +164,14 @@ class WorkoutRepository(
         repMax: Int? = null,
         autoWarmup: Boolean = false,
         supersetGroup: Int? = null,
+        percentScheme: String? = null,
     ): Long = db.withTransaction {
         programDao.insertDayExercise(
             DayExercise(
                 dayId = dayId, exerciseId = exerciseId, position = programDao.nextExercisePosition(dayId),
                 targetSets = sets, targetReps = reps, targetWeightKg = weightKg, restSeconds = restSeconds,
                 progression = progression, incrementKg = incrementKg, repMax = repMax, autoWarmup = autoWarmup,
-                supersetGroup = supersetGroup,
+                supersetGroup = supersetGroup, percentScheme = percentScheme,
             )
         )
     }
@@ -151,6 +182,7 @@ class WorkoutRepository(
         incrementKg: Double = 0.0,
         repMax: Int? = null,
         autoWarmup: Boolean = false,
+        percentScheme: String? = null,
     ) = db.withTransaction {
         val item = programDao.getDayExercises(dayId).firstOrNull { it.id == id } ?: return@withTransaction
         programDao.updateDayExercises(
@@ -158,6 +190,7 @@ class WorkoutRepository(
                 item.copy(
                     targetSets = sets, targetReps = reps, targetWeightKg = weightKg, restSeconds = restSeconds,
                     progression = progression, incrementKg = incrementKg, repMax = repMax, autoWarmup = autoWarmup,
+                    percentScheme = percentScheme,
                 )
             )
         )
@@ -192,6 +225,7 @@ class WorkoutRepository(
     // ---------- Workouts ----------
 
     fun observeActiveSession(): Flow<WorkoutSession?> = sessionDao.observeActive()
+    suspend fun hasActiveSession(): Boolean = sessionDao.getActive() != null
     fun observeFinishedSessions(): Flow<List<SessionSummary>> = sessionDao.observeFinishedSummaries()
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -215,7 +249,13 @@ class WorkoutRepository(
      * Returns the existing active workout's id instead if one is running.
      * @param barDisplay empty-bar weight in [unit], used for automatic warm-up sets.
      */
-    suspend fun startFromDay(dayId: Long, unit: WeightUnit = WeightUnit.LB, barDisplay: Double = defaultBar(unit)): Long =
+    suspend fun startFromDay(
+        dayId: Long,
+        unit: WeightUnit = WeightUnit.LB,
+        barDisplay: Double = defaultBar(unit),
+        intensity: Double = 1.0,
+        readiness: Double? = null,
+    ): Long =
         db.withTransaction {
             sessionDao.getActive()?.let { return@withTransaction it.id }
             val day = requireNotNull(programDao.getDay(dayId)) { "Day $dayId not found" }
@@ -225,31 +265,58 @@ class WorkoutRepository(
                     name = listOfNotNull(program?.name, day.name).joinToString(" · "),
                     programDayId = dayId,
                     startedAt = clock(),
+                    readiness = readiness,
+                    intensity = intensity,
                 )
             )
             programDao.getDayExercises(dayId).forEachIndexed { index, de ->
                 val plan = planFor(de, unit)
+                val working = plan.sets.map { (kg, reps) -> lighter(kg, intensity, unit) to reps }
+                val note = if (intensity < 0.999) {
+                    "Lighter day (−${Math.round((1 - intensity) * 100)}%)" + (plan.note?.let { " · planned: $it" } ?: "")
+                } else plan.note
                 val seId = sessionDao.insertSessionExercise(
                     SessionExercise(
                         sessionId = sessionId, exerciseId = de.exerciseId, position = index,
                         restSeconds = de.restSeconds, targetReps = de.targetReps,
-                        supersetGroup = de.supersetGroup, note = plan.note,
+                        supersetGroup = de.supersetGroup, note = note,
                         repMax = if (de.progression == Progression.DOUBLE) de.repMax else null,
+                        percentScheme = if (de.progression == Progression.PERCENT) de.percentScheme else null,
                     )
                 )
-                val warmups = if (de.autoWarmup) warmupSets(plan.sets.first().first, unit, barDisplay) else emptyList()
-                val all = warmups.map { (kg, reps) -> Triple(kg, reps, SetType.WARMUP) } +
-                    plan.sets.map { (kg, reps) -> Triple(kg, reps, SetType.NORMAL) }
-                sessionDao.insertSets(all.mapIndexed { i, (kg, reps, type) ->
-                    SetLog(sessionExerciseId = seId, setNumber = i + 1, weightKg = kg, reps = reps, setType = type)
-                })
+                val warmups = if (de.autoWarmup) warmupSets(working.first().first, unit, barDisplay) else emptyList()
+                val logs = warmups.map { (kg, reps) ->
+                    SetLog(sessionExerciseId = seId, setNumber = 0, weightKg = kg, reps = reps, setType = SetType.WARMUP)
+                } + working.mapIndexed { i, (kg, reps) ->
+                    val amrap = plan.amrap.getOrElse(i) { false }
+                    SetLog(sessionExerciseId = seId, setNumber = 0, weightKg = kg, reps = reps,
+                        amrap = amrap, targetReps = if (amrap) reps else null)
+                }
+                sessionDao.insertSets(logs.mapIndexed { i, l -> l.copy(setNumber = i + 1) })
             }
             sessionId
         }
 
+    /** Lighter-day scaling, rounded down to a loadable weight. */
+    private fun lighter(kg: Double, intensity: Double, unit: WeightUnit): Double =
+        if (intensity >= 0.999 || kg <= 0) kg else Progressions.roundDownLoadable(kg * intensity, unit)
+
     private suspend fun planFor(de: DayExercise, unit: WeightUnit): Plan {
         val recent = historyDao.recentSessionSets(de.exerciseId, 2)
             .groupBy { it.sessionId }.values.toList() // query is newest-first; groupBy keeps first-seen order
+        var tm: Double? = null
+        var tmNote: String? = null
+        if (de.progression == Progression.PERCENT) {
+            tm = exerciseDao.get(de.exerciseId)?.trainingMaxKg
+            if (tm == null) {
+                // No training max yet: start from 90% of the best estimated 1RM in history, and remember it.
+                tm = suggestedTrainingMax(de.exerciseId, unit)
+                if (tm != null) {
+                    exerciseDao.setTrainingMax(de.exerciseId, tm)
+                    tmNote = "Training max set to ${Units.formatWithUnit(tm, unit)} (90% of your best estimated 1RM)"
+                }
+            }
+        }
         val cfg = ProgressionConfig(
             type = de.progression,
             targetSets = de.targetSets,
@@ -257,8 +324,11 @@ class WorkoutRepository(
             repMax = de.repMax ?: de.targetReps,
             startWeightKg = de.targetWeightKg,
             incrementKg = de.incrementKg,
+            scheme = PercentScheme.parse(de.percentScheme),
+            trainingMaxKg = tm,
         )
-        return Progressions.plan(cfg, recent, unit)
+        val plan = Progressions.plan(cfg, recent, unit)
+        return if (tmNote != null) plan.copy(note = tmNote) else plan
     }
 
     private fun warmupSets(workKg: Double, unit: WeightUnit, barDisplay: Double): List<Pair<Double, Int>> =
@@ -366,6 +436,11 @@ class WorkoutRepository(
         sessionDao.updateSet(set.copy(setType = type))
     }
 
+    suspend fun setAmrap(setId: Long, amrap: Boolean) {
+        val set = sessionDao.getSet(setId) ?: return
+        sessionDao.updateSet(set.copy(amrap = amrap, targetReps = if (amrap) (set.targetReps ?: set.reps) else null))
+    }
+
     suspend fun setSetRpe(setId: Long, rpe: Double?) {
         val set = sessionDao.getSet(setId) ?: return
         sessionDao.updateSet(set.copy(rpe = rpe))
@@ -398,15 +473,29 @@ class WorkoutRepository(
      * Ends the workout: drops unfinished sets and empty exercises. Returns false (and changes nothing)
      * when there are no completed sets, so the UI can offer to discard instead.
      */
-    suspend fun finishSession(sessionId: Long): Boolean = db.withTransaction {
+    suspend fun finishSession(sessionId: Long, unit: WeightUnit = WeightUnit.LB): Boolean = db.withTransaction {
         if (sessionDao.lastCompletedAt(sessionId) == null) return@withTransaction false
         sessionDao.deleteIncompleteSets(sessionId)
         sessionDao.deleteEmptySessionExercises(sessionId)
-        val items = sessionDao.getSessionExercises(sessionId)
-        sessionDao.updateSessionExercises(Supersets.dissolveSingletons(items, { it.supersetGroup }) { it.copy(supersetGroup = null) })
         val session = sessionDao.get(sessionId) ?: return@withTransaction false
+        val items = Supersets.dissolveSingletons(sessionDao.getSessionExercises(sessionId), { it.supersetGroup }) {
+            it.copy(supersetGroup = null)
+        }.map { se -> if (session.intensity >= 0.999) updateTrainingMax(se, unit) ?: se else se }
+        sessionDao.updateSessionExercises(items)
         sessionDao.update(session.copy(endedAt = clock()))
         true
+    }
+
+    /** Applies the AMRAP rule to the exercise's training max. Returns the session exercise with the change noted. */
+    private suspend fun updateTrainingMax(se: SessionExercise, unit: WeightUnit): SessionExercise? {
+        val exercise = exerciseDao.get(se.exerciseId) ?: return null
+        val tm = exercise.trainingMaxKg ?: return null
+        val amrap = sessionDao.getSets(se.id).lastOrNull { it.amrap && it.completed && it.setType != SetType.WARMUP } ?: return null
+        val target = amrap.targetReps ?: return null
+        val inc = Progressions.defaultFor(exercise.name, target, unit).incrementKg
+        val change = TrainingMax.afterAmrap(tm, target, amrap.reps, inc, unit)
+        exerciseDao.setTrainingMax(exercise.id, change.newKg)
+        return se.copy(note = change.note)
     }
 
     suspend fun updateSessionNotes(sessionId: Long, notes: String) {
@@ -426,6 +515,8 @@ class WorkoutRepository(
     fun observeExerciseHistory(exerciseId: Long): Flow<List<ExerciseSetRow>> = historyDao.observeExerciseSets(exerciseId)
     fun observeExercisesWithHistory(): Flow<List<ExerciseHistorySummary>> = historyDao.observeExercisesWithHistory()
     fun observeMuscleSets(since: Long): Flow<List<MuscleSets>> = historyDao.observeMuscleSets(since)
+    fun observeMuscleEvents(since: Long): Flow<List<MuscleSetEvent>> = historyDao.observeMuscleEvents(since)
+    suspend fun recapRows(until: Long): List<RecapSetRow> = historyDao.recapRows(until)
 
     // ---------- Body ----------
 

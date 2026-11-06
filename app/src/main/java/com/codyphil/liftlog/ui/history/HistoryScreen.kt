@@ -29,6 +29,10 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.codyphil.liftlog.data.SessionSummary
 import com.codyphil.liftlog.domain.Format
+import com.codyphil.liftlog.domain.Recaps
+import com.codyphil.liftlog.ui.recap.defaultRecapMonth
+import androidx.compose.material3.Icon
+import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import com.codyphil.liftlog.domain.Units
 import com.codyphil.liftlog.domain.WeightUnit
 import com.codyphil.liftlog.ui.appContainer
@@ -43,7 +47,7 @@ import java.util.Date
 import java.util.Locale
 
 @Composable
-fun HistoryScreen(onOpenSession: (Long) -> Unit) {
+fun HistoryScreen(onOpenSession: (Long) -> Unit, onOpenRecap: () -> Unit = {}) {
     val container = appContainer()
     val sessions by container.repository.observeFinishedSessions().collectAsStateWithLifecycle(null)
     val settings by container.settings.settings.collectAsStateWithLifecycle()
@@ -76,6 +80,19 @@ fun HistoryScreen(onOpenSession: (Long) -> Unit) {
                     "Lifted", compact(Units.fromKg(list.sumOf { it.volumeKg }, settings.unit)), Modifier.weight(1f),
                     unit = settings.unit.label,
                 )
+            }
+        }
+        item {
+            Spacer(Modifier.height(4.dp))
+            Panel(onClick = onOpenRecap, brush = Brand.heroGradient, contentPadding = PaddingValues(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Eyebrow("Monthly recap", color = Brand.Volt)
+                        Text(Recaps.monthName(defaultRecapMonth()), style = MaterialTheme.typography.titleLarge)
+                        Text("Records, streaks and totals. Shareable as an image.", style = MaterialTheme.typography.bodySmall, color = Brand.TextMid)
+                    }
+                    Icon(Icons.AutoMirrored.Rounded.ArrowForward, null, tint = Brand.Volt)
+                }
             }
         }
         grouped.forEach { (month, items) ->

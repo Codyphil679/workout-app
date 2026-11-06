@@ -15,6 +15,8 @@ object Templates {
         val repMax: Int? = null,
         val progression: Progression? = null,
         val autoWarmup: Boolean = false,
+        /** For % TM exercises, e.g. "75x5,80x5,85x5+". */
+        val percentScheme: String? = null,
     )
     data class Day(val name: String, val items: List<Item>)
     data class Template(
@@ -73,6 +75,33 @@ object Templates {
                     Item("Deadlift", 3, 5, 180, autoWarmup = true), Item("Bulgarian Split Squat", 3, 8, 90),
                     Item("Leg Curl", 3, 10, 60, superset = 1), Item("Leg Extension", 3, 10, 60, superset = 1),
                     Item("Hanging Leg Raise", 3, 10, 60),
+                )),
+            ),
+        ),
+        Template(
+            "Training Max Strength",
+            "Main lifts as % of a training max, last set AMRAP. Your AMRAP result moves the training max up or down.",
+            "Strength", "3–4×/week",
+            listOf(
+                Day("Squat day", listOf(
+                    Item("Back Squat", 3, 5, 180, progression = Progression.PERCENT, percentScheme = "75x5,80x5,85x5+", autoWarmup = true),
+                    Item("Back Squat", 3, 8, 120, progression = Progression.PERCENT, percentScheme = "65x8,65x8,65x8"),
+                    Item("Leg Curl", 3, 10, 60), Item("Hanging Leg Raise", 3, 10, 60),
+                )),
+                Day("Bench day", listOf(
+                    Item("Bench Press", 3, 5, 180, progression = Progression.PERCENT, percentScheme = "75x5,80x5,85x5+", autoWarmup = true),
+                    Item("Overhead Press", 3, 8, 120, progression = Progression.PERCENT, percentScheme = "65x8,65x8,65x8"),
+                    Item("Dumbbell Row", 3, 10, 90), Item("Tricep Pushdown", 3, 10, 60),
+                )),
+                Day("Deadlift day", listOf(
+                    Item("Deadlift", 3, 5, 180, progression = Progression.PERCENT, percentScheme = "75x5,80x5,85x5+", autoWarmup = true),
+                    Item("Front Squat", 3, 6, 120, progression = Progression.PERCENT, percentScheme = "60x6,60x6,60x6"),
+                    Item("Lat Pulldown", 3, 10, 90), Item("Calf Raise", 3, 12, 60),
+                )),
+                Day("Press day", listOf(
+                    Item("Overhead Press", 3, 5, 180, progression = Progression.PERCENT, percentScheme = "75x5,80x5,85x5+", autoWarmup = true),
+                    Item("Incline Bench Press", 3, 8, 120, progression = Progression.PERCENT, percentScheme = "60x8,60x8,60x8"),
+                    Item("Chin-Up", 3, 8, 90), Item("Dumbbell Curl", 3, 10, 60),
                 )),
             ),
         ),

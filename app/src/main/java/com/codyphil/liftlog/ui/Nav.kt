@@ -36,6 +36,8 @@ import com.codyphil.liftlog.ui.programs.DayEditorScreen
 import com.codyphil.liftlog.ui.programs.ProgramDetailScreen
 import com.codyphil.liftlog.ui.programs.ProgramsScreen
 import com.codyphil.liftlog.ui.progress.BodyScreen
+import com.codyphil.liftlog.ui.recovery.RecoveryScreen
+import com.codyphil.liftlog.ui.recap.RecapScreen
 import com.codyphil.liftlog.ui.progress.ExerciseProgressScreen
 import com.codyphil.liftlog.ui.progress.ProgressScreen
 import com.codyphil.liftlog.ui.settings.SettingsScreen
@@ -54,6 +56,8 @@ object Routes {
     const val SETTINGS = "settings"
     const val WORKOUT = "workout"
     const val BODY = "body"
+    const val RECOVERY = "recovery"
+    const val RECAP = "recap"
     fun program(id: Long) = "program/$id"
     fun day(id: Long) = "day/$id"
     fun session(id: Long) = "session/$id"
@@ -107,13 +111,14 @@ fun LiftLogNav() {
                     onOpenWorkout = { nav.navigate(Routes.WORKOUT) { launchSingleTop = true } },
                     onOpenPrograms = { nav.navigateTab(Routes.PROGRAMS) },
                     onOpenSession = { nav.navigate(Routes.session(it)) },
+                    onOpenRecovery = { nav.navigate(Routes.RECOVERY) },
                 )
             }
             composable(Routes.PROGRAMS) {
                 ProgramsScreen(onOpenProgram = { nav.navigate(Routes.program(it)) })
             }
             composable(Routes.HISTORY) {
-                HistoryScreen(onOpenSession = { nav.navigate(Routes.session(it)) })
+                HistoryScreen(onOpenSession = { nav.navigate(Routes.session(it)) }, onOpenRecap = { nav.navigate(Routes.RECAP) })
             }
             composable(Routes.PROGRESS) {
                 ProgressScreen(
@@ -123,6 +128,8 @@ fun LiftLogNav() {
             }
             composable(Routes.SETTINGS) { SettingsScreen() }
             composable(Routes.BODY) { BodyScreen(onBack = { nav.popBackStack() }) }
+            composable(Routes.RECOVERY) { RecoveryScreen(onBack = { nav.popBackStack() }) }
+            composable(Routes.RECAP) { RecapScreen(onBack = { nav.popBackStack() }) }
             composable(Routes.WORKOUT) {
                 ActiveWorkoutScreen(
                     onBack = { nav.popBackStack() },

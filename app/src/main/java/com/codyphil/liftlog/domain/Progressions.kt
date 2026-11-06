@@ -9,6 +9,8 @@ data class Plan(
     /** One entry per working set: weight (kg) and reps to pre-fill. */
     val sets: List<Pair<Double, Int>>,
     val note: String?,
+    /** Parallel to [sets]: true for "as many reps as possible" sets. Empty means none. */
+    val amrap: List<Boolean> = emptyList(),
 )
 
 data class ProgressionConfig(
@@ -20,6 +22,9 @@ data class ProgressionConfig(
     val repMax: Int,
     val startWeightKg: Double,
     val incrementKg: Double,
+    /** For PERCENT: the sets to do, and the exercise's training max. */
+    val scheme: List<PercentSet> = emptyList(),
+    val trainingMaxKg: Double? = null,
 )
 
 object Progressions {
@@ -37,6 +42,7 @@ object Progressions {
      * @param recent working sets from previous workouts, grouped per workout, newest first.
      */
     fun plan(cfg: ProgressionConfig, recent: List<List<ExerciseSetRow>>, unit: WeightUnit): Plan {
+        if (cfg.type == Progression.PERCENT) return percentPlan(cfg, unit)
         val sets = cfg.targetSets.coerceAtLeast(1)
         val last = recent.firstOrNull()
         if (last.isNullOrEmpty()) {
@@ -57,7 +63,19 @@ object Progressions {
                     val atTop = s.filter { kotlin.math.abs(it.weightKg - top) < 1e-6 }
                     return atTop.size >= sets && atTop.all { it.reps >= cfg.repMin }
                 }
+                val topSets = last.filter { kotlin.math.abs(it.weightKg - w) < 1e-6 }
+                val rpes = topSets.mapNotNull { it.rpe }
+                val hardest = rpes.maxOrNull()
+                val allEasy = rpes.size == topSets.size && rpes.isNotEmpty() && hardest!! <= 7.0
                 when {
+                    success(last) && hardest != null && hardest >= 9.5 -> Plan(
+                        List(sets) { w to cfg.repMin },
+                        "Same weight: you hit every rep, but at RPE ${Units.formatNumber(hardest)}",
+                    )
+                    success(last) && allEasy -> Plan(
+                        List(sets) { (w + 2 * cfg.incrementKg) to cfg.repMin },
+                        "+${Units.format(2 * cfg.incrementKg, unit)} ${unit.label}: every rep at RPE 7 or easier",
+                    )
                     success(last) -> Plan(
                         List(sets) { (w + cfg.incrementKg) to cfg.repMin },
                         "+$inc: you hit every rep last time",
@@ -78,7 +96,13 @@ object Progressions {
                 val top = cfg.repMax.coerceAtLeast(cfg.repMin)
                 val w = last.maxOf { it.weightKg }
                 val atWeight = last.filter { kotlin.math.abs(it.weightKg - w) < 1e-6 }
-                if (atWeight.size >= sets && atWeight.all { it.reps >= top }) {
+                val hardest = atWeight.mapNotNull { it.rpe }.maxOrNull()
+                if (atWeight.size >= sets && atWeight.all { it.reps >= top } && hardest != null && hardest >= 9.5) {
+                    Plan(
+                        List(sets) { w to top },
+                        "Same weight: $top reps on every set, but at RPE ${Units.formatNumber(hardest)}. Own it once more",
+                    )
+                } else if (atWeight.size >= sets && atWeight.all { it.reps >= top }) {
                     Plan(List(sets) { (w + cfg.incrementKg) to cfg.repMin }, "+$inc: you hit $top reps on every set")
                 } else {
                     Plan(
@@ -87,7 +111,18 @@ object Progressions {
                     )
                 }
             }
+
+            Progression.PERCENT -> error("handled above")
         }
+    }
+
+    private fun percentPlan(cfg: ProgressionConfig, unit: WeightUnit): Plan {
+        val scheme = cfg.scheme.ifEmpty { List(cfg.targetSets.coerceAtLeast(1)) { PercentSet(75.0, cfg.repMin) } }
+        val tm = cfg.trainingMaxKg
+        val sets = scheme.map { (if (tm != null) PercentScheme.weightFor(tm, it.percent, unit) else 0.0) to it.reps }
+        val note = if (tm == null) "Set a training max (⋮ menu) to fill in the weights"
+        else "Training max ${Units.formatWithUnit(tm, unit)}" + if (scheme.any { it.amrap }) " · + set: as many reps as you can" else ""
+        return Plan(sets, note, scheme.map { it.amrap })
     }
 
     /** Sensible default per exercise: linear for the big barbell lifts, double progression for everything else. */

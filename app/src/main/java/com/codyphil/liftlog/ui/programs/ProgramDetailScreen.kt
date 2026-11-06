@@ -49,6 +49,7 @@ import com.codyphil.liftlog.data.DaySummary
 import com.codyphil.liftlog.ui.appContainer
 import com.codyphil.liftlog.ui.components.ConfirmDialog
 import com.codyphil.liftlog.ui.components.Eyebrow
+import com.codyphil.liftlog.ui.components.rememberDayStarter
 import com.codyphil.liftlog.ui.components.Panel
 import com.codyphil.liftlog.ui.components.TextPromptDialog
 import com.codyphil.liftlog.ui.theme.Brand
@@ -65,6 +66,7 @@ fun ProgramDetailScreen(programId: Long, onBack: () -> Unit, onOpenDay: (Long) -
     val days by repo.observeDays(programId).collectAsStateWithLifecycle(emptyList())
     val active by repo.observeActiveSession().collectAsStateWithLifecycle(null)
     var addingDay by remember { mutableStateOf(false) }
+    val startDay = rememberDayStarter(onStarted = onStartWorkout)
     var renaming by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
@@ -119,7 +121,7 @@ fun ProgramDetailScreen(programId: Long, onBack: () -> Unit, onOpenDay: (Long) -
                     isLast = index == days.lastIndex,
                     canStart = active == null && day.exerciseCount > 0,
                     onOpen = { onOpenDay(day.id) },
-                    onStart = { scope.launch { container.startFromDay(day.id); onStartWorkout() } },
+                    onStart = { startDay(day.id) },
                     onMove = { delta -> scope.launch { repo.moveDay(day.id, delta) } },
                     onRename = { name -> scope.launch { repo.renameDay(day.id, name) } },
                     onDelete = { scope.launch { repo.deleteDay(day.id) } },

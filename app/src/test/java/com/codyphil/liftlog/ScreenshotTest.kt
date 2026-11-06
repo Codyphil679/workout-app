@@ -129,7 +129,7 @@ class ScreenshotTest {
 
     @Test fun home() {
         compose.setContent { LiftLogTheme { LiftLogNav() } }
-        waitForText("Recent")
+        waitForText("Recovery")
         shot("01_home")
     }
 
@@ -170,6 +170,51 @@ class ScreenshotTest {
         waitForText("Working sets per muscle")
         waitForText("182.4 lb")
         shot("10_progress")
+    }
+
+    private fun tmBenchDay(): Long = runBlocking {
+        repo.createFromTemplate(Templates.all.first { it.name == "Training Max Strength" })
+        repo.setTrainingMax(repo.getOrCreateExercise("Bench Press"), 225 * 0.45359237)
+        repo.setTrainingMax(repo.getOrCreateExercise("Overhead Press"), 135 * 0.45359237)
+        repo.observeAllDays().first().first { it.name == "Bench day" }.id
+    }
+
+    @Test fun tmProgramDay() {
+        val day = tmBenchDay()
+        compose.setContent { Frame { DayEditorScreen(day, onBack = {}, onStartWorkout = {}) } }
+        waitForText("TM 225")
+        shot("12_tm_program_day")
+    }
+
+    @Test fun tmWorkout() {
+        val day = tmBenchDay()
+        runBlocking {
+            val s = app.container.startFromDay(day)
+            val sets = repo.observeSessionDetail(s).first()!!.exercises[0].sets
+            sets.filter { it.setType == com.codyphil.liftlog.data.SetType.WARMUP }.forEach { repo.completeSet(it.id, it.weightKg, it.reps) }
+            val working = sets.filter { it.setType != com.codyphil.liftlog.data.SetType.WARMUP }
+            repo.completeSet(working[0].id, working[0].weightKg, 5)
+            repo.completeSet(working[1].id, working[1].weightKg, 5)
+        }
+        compose.setContent { Frame { ActiveWorkoutScreen(onBack = {}, onFinished = {}, onOpenExercise = {}) } }
+        waitForText("Training max 225")
+        shot("13_tm_workout")
+    }
+
+    @Test fun recovery() {
+        runBlocking { startPushWorkout() }
+        compose.setContent { Frame { com.codyphil.liftlog.ui.recovery.RecoveryScreen(onBack = {}) } }
+        waitForText("What's ready to train")
+        waitForText("Recovering")
+        shot("14_recovery")
+    }
+
+    @Test fun recap() {
+        val c = java.util.Calendar.getInstance().apply { add(java.util.Calendar.MONTH, -1) }
+        val month = com.codyphil.liftlog.domain.Recaps.monthStart(c.get(java.util.Calendar.YEAR), c.get(java.util.Calendar.MONTH))
+        compose.setContent { Frame { com.codyphil.liftlog.ui.recap.RecapScreen(onBack = {}, initialMonth = month) } }
+        waitForText("Share recap image")
+        shot("15_recap")
     }
 
     @Test fun body() {

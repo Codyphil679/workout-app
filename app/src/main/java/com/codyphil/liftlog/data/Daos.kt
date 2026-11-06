@@ -35,6 +35,12 @@ interface ExerciseDao {
     @Query("UPDATE exercises SET muscle = :muscle WHERE id = :id")
     suspend fun setMuscle(id: Long, muscle: Muscle)
 
+    @Query("UPDATE exercises SET trainingMaxKg = :kg WHERE id = :id")
+    suspend fun setTrainingMax(id: Long, kg: Double?)
+
+    @Query("SELECT * FROM exercises WHERE id = :id")
+    suspend fun get(id: Long): Exercise?
+
     @Query("UPDATE exercises SET name = :name WHERE id = :id")
     suspend fun rename(id: Long, name: String)
 
@@ -119,7 +125,8 @@ interface ProgramDao {
     @Query(
         """SELECT de.id, de.dayId, de.exerciseId, e.name AS exerciseName, de.position,
                   de.targetSets, de.targetReps, de.targetWeightKg, de.restSeconds,
-                  de.progression, de.incrementKg, de.repMax, de.supersetGroup, de.autoWarmup, e.muscle
+                  de.progression, de.incrementKg, de.repMax, de.supersetGroup, de.autoWarmup, e.muscle,
+                  de.percentScheme, e.trainingMaxKg
            FROM day_exercises de JOIN exercises e ON e.id = de.exerciseId
            WHERE de.dayId = :dayId ORDER BY de.position"""
     )
@@ -181,7 +188,7 @@ interface SessionDao {
     // Session exercises
     @Query(
         """SELECT se.id, se.sessionId, se.exerciseId, e.name AS exerciseName, se.position,
-                  se.restSeconds, se.targetReps, se.supersetGroup, se.note, se.repMax
+                  se.restSeconds, se.targetReps, se.supersetGroup, se.note, se.repMax, se.percentScheme, e.trainingMaxKg
            FROM session_exercises se JOIN exercises e ON e.id = se.exerciseId
            WHERE se.sessionId = :sessionId ORDER BY se.position"""
     )
@@ -256,7 +263,7 @@ interface SessionDao {
 interface HistoryDao {
     /** Every completed set of an exercise across finished workouts, oldest first. */
     @Query(
-        """SELECT s.id AS sessionId, s.name AS sessionName, s.startedAt, l.setNumber, l.weightKg, l.reps
+        """SELECT s.id AS sessionId, s.name AS sessionName, s.startedAt, l.setNumber, l.weightKg, l.reps, l.rpe
            FROM set_logs l
            JOIN session_exercises se ON se.id = l.sessionExerciseId
            JOIN sessions s ON s.id = se.sessionId
@@ -267,7 +274,7 @@ interface HistoryDao {
 
     /** Completed sets from the most recent finished workout that included this exercise. */
     @Query(
-        """SELECT s.id AS sessionId, s.name AS sessionName, s.startedAt, l.setNumber, l.weightKg, l.reps
+        """SELECT s.id AS sessionId, s.name AS sessionName, s.startedAt, l.setNumber, l.weightKg, l.reps, l.rpe
            FROM set_logs l
            JOIN session_exercises se ON se.id = l.sessionExerciseId
            JOIN sessions s ON s.id = se.sessionId
@@ -284,7 +291,7 @@ interface HistoryDao {
 
     /** Working sets from the [sessions] most recent finished workouts containing this exercise (newest first). */
     @Query(
-        """SELECT s.id AS sessionId, s.name AS sessionName, s.startedAt, l.setNumber, l.weightKg, l.reps
+        """SELECT s.id AS sessionId, s.name AS sessionName, s.startedAt, l.setNumber, l.weightKg, l.reps, l.rpe
            FROM set_logs l
            JOIN session_exercises se ON se.id = l.sessionExerciseId
            JOIN sessions s ON s.id = se.sessionId
@@ -293,7 +300,7 @@ interface HistoryDao {
                JOIN session_exercises se2 ON se2.sessionId = s2.id
                JOIN set_logs l2 ON l2.sessionExerciseId = se2.id
                WHERE se2.exerciseId = :exerciseId AND l2.completed = 1 AND l2.setType != 'WARMUP'
-                 AND s2.endedAt IS NOT NULL
+                 AND s2.endedAt IS NOT NULL AND s2.intensity >= 0.999
                GROUP BY s2.id ORDER BY s2.startedAt DESC LIMIT :sessions)
            ORDER BY s.startedAt DESC, se.position, l.setNumber"""
     )
@@ -310,6 +317,39 @@ interface HistoryDao {
            GROUP BY e.muscle"""
     )
     fun observeMuscleSets(since: Long): Flow<List<MuscleSets>>
+
+    @Query(
+        """SELECT e.muscle AS muscle, l.completedAt AS completedAt
+           FROM set_logs l
+           JOIN session_exercises se ON se.id = l.sessionExerciseId
+           JOIN exercises e ON e.id = se.exerciseId
+           WHERE l.completed = 1 AND l.setType != 'WARMUP' AND l.completedAt >= :since"""
+    )
+    fun observeMuscleEvents(since: Long): Flow<List<MuscleSetEvent>>
+
+    /** Every completed working set from finished workouts that started before [until], oldest first. */
+    @Query(
+        """SELECT s.id AS sessionId, s.startedAt, s.endedAt, e.id AS exerciseId, e.name AS exerciseName, e.muscle,
+                  l.weightKg, l.reps
+           FROM set_logs l
+           JOIN session_exercises se ON se.id = l.sessionExerciseId
+           JOIN sessions s ON s.id = se.sessionId
+           JOIN exercises e ON e.id = se.exerciseId
+           WHERE l.completed = 1 AND l.setType != 'WARMUP' AND s.endedAt IS NOT NULL AND s.startedAt < :until
+           ORDER BY s.startedAt"""
+    )
+    suspend fun recapRows(until: Long): List<RecapSetRow>
+
+    /** Best Epley e1RM (kg) from finished workouts, ignoring sets above 12 reps. */
+    @Query(
+        """SELECT MAX(CASE WHEN l.reps = 1 THEN l.weightKg ELSE l.weightKg * (1 + l.reps / 30.0) END)
+           FROM set_logs l
+           JOIN session_exercises se ON se.id = l.sessionExerciseId
+           JOIN sessions s ON s.id = se.sessionId
+           WHERE se.exerciseId = :exerciseId AND l.completed = 1 AND l.setType != 'WARMUP' AND l.reps BETWEEN 1 AND 12
+             AND s.endedAt IS NOT NULL"""
+    )
+    suspend fun bestE1rm(exerciseId: Long): Double?
 
     @Query(
         """SELECT e.id, e.name, MAX(s.startedAt) AS lastPerformed, COUNT(DISTINCT s.id) AS sessionCount

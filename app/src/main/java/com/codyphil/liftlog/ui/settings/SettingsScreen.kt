@@ -45,6 +45,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.codyphil.liftlog.domain.Format
+import com.codyphil.liftlog.health.HealthSync
 import com.codyphil.liftlog.domain.Units
 import com.codyphil.liftlog.ui.components.Pill
 import com.codyphil.liftlog.domain.WeightUnit
@@ -165,6 +166,25 @@ fun SettingsScreen() {
                 }
             }
         }
+        item { SectionHeader("Coaching") }
+        item {
+            Panel {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Readiness check-in", style = MaterialTheme.typography.titleMedium)
+                        Text("Four quick questions before a program day. Low score → option for a lighter day.",
+                            style = MaterialTheme.typography.bodySmall, color = Brand.TextMid)
+                    }
+                    Switch(
+                        checked = settings.readinessCheck,
+                        onCheckedChange = { v -> container.settings.update { it.copy(readinessCheck = v) } },
+                        colors = SwitchDefaults.colors(checkedTrackColor = Brand.Volt, checkedThumbColor = Brand.Ink),
+                    )
+                }
+            }
+        }
+        item { SectionHeader("Health Connect") }
+        item { HealthConnectPanel() }
         item { SectionHeader("Backup & export") }
         item {
             Panel(contentPadding = PaddingValues(vertical = 6.dp)) {
@@ -234,4 +254,71 @@ private suspend fun runIo(context: Context, success: String?, block: suspend () 
     val result = withContext(Dispatchers.IO) { runCatching { block() } }
     val msg = result.fold({ success }, { "Failed: ${it.message ?: it.javaClass.simpleName}" })
     if (msg != null) Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+}
+
+@Composable
+private fun HealthConnectPanel() {
+    val container = appContainer()
+    val health = container.health
+    val settings by container.settings.settings.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val availability = remember { health.availability() }
+    var syncing by remember { mutableStateOf(false) }
+
+    fun syncAll() {
+        syncing = true
+        scope.launch {
+            val n = health.syncAll(settings.unit)
+            syncing = false
+            Toast.makeText(context, if (n > 0) "Synced $n workouts to Health Connect" else "Nothing synced", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(health.permissionContract()) { granted ->
+        if (granted.containsAll(health.permissions)) {
+            container.settings.update { it.copy(healthConnectSync = true) }
+            syncAll()
+        } else {
+            Toast.makeText(context, "Health Connect access wasn't granted", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    Panel {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Sync workouts", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    when (availability) {
+                        HealthSync.Availability.AVAILABLE -> "Finished workouts appear in Health Connect (and apps that read it, like Samsung Health), with each set's reps."
+                        HealthSync.Availability.NEEDS_INSTALL_OR_UPDATE -> "Health Connect needs to be installed or updated from the Play Store first."
+                        HealthSync.Availability.UNSUPPORTED -> "Health Connect isn't available on this device."
+                    },
+                    style = MaterialTheme.typography.bodySmall, color = Brand.TextMid,
+                )
+            }
+            Switch(
+                checked = settings.healthConnectSync,
+                enabled = availability == HealthSync.Availability.AVAILABLE,
+                onCheckedChange = { on ->
+                    if (!on) container.settings.update { it.copy(healthConnectSync = false) }
+                    else scope.launch {
+                        if (health.hasPermission()) {
+                            container.settings.update { it.copy(healthConnectSync = true) }
+                            syncAll()
+                        } else permissionLauncher.launch(health.permissions)
+                    }
+                },
+                colors = SwitchDefaults.colors(checkedTrackColor = Brand.Volt, checkedThumbColor = Brand.Ink),
+            )
+        }
+        if (availability == HealthSync.Availability.NEEDS_INSTALL_OR_UPDATE) {
+            TextButton(onClick = { runCatching { context.startActivity(health.installIntent()) } }) { Text("Get Health Connect") }
+        }
+        if (settings.healthConnectSync) {
+            TextButton(onClick = { syncAll() }, enabled = !syncing) {
+                Text(if (syncing) "Syncing…" else "Sync all past workouts again")
+            }
+        }
+    }
 }

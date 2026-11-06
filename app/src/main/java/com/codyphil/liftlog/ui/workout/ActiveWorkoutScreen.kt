@@ -75,6 +75,7 @@ import androidx.compose.ui.unit.dp
 import android.widget.Toast
 import com.codyphil.liftlog.data.SetType
 import com.codyphil.liftlog.ui.components.PlateCalculatorDialog
+import com.codyphil.liftlog.ui.components.NumberField
 import com.codyphil.liftlog.ui.components.RpeDialog
 import kotlinx.coroutines.launch
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -101,6 +102,7 @@ import kotlinx.coroutines.delay
 @Composable
 fun ActiveWorkoutScreen(onBack: () -> Unit, onFinished: (Long) -> Unit, onOpenExercise: (Long) -> Unit) {
     val vm = containerViewModel { ActiveWorkoutViewModel(it) }
+    val container = com.codyphil.liftlog.ui.appContainer()
     val state by vm.state.collectAsStateWithLifecycle()
     val settings by vm.settings.collectAsStateWithLifecycle()
     val lastTime by vm.lastTime.collectAsStateWithLifecycle()
@@ -116,6 +118,7 @@ fun ActiveWorkoutScreen(onBack: () -> Unit, onFinished: (Long) -> Unit, onOpenEx
     var menuOpen by remember { mutableStateOf(false) }
     var finishing by remember { mutableStateOf(false) }
     var plateFor by remember { mutableStateOf<Double?>(null) }
+    var tmFor by remember { mutableStateOf<SessionExerciseWithSets?>(null) }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
 
@@ -201,6 +204,8 @@ fun ActiveWorkoutScreen(onBack: () -> Unit, onFinished: (Long) -> Unit, onOpenEx
                         onDeleteSet = { id -> vm.launch { vm.repo.deleteSet(id) } },
                         onSetType = { id, type -> vm.launch { vm.repo.setSetType(id, type) } },
                         onRpe = { id, rpe -> vm.launch { vm.repo.setSetRpe(id, rpe) } },
+                        onAmrap = { id, on -> vm.launch { vm.repo.setAmrap(id, on) } },
+                        onTrainingMax = { tmFor = ex },
                         onEditSet = { id, w, r -> vm.launch { vm.repo.updateSetValues(id, w, r) } },
                         onToggleSet = { set, w, r ->
                             vm.launch {
@@ -262,6 +267,16 @@ fun ActiveWorkoutScreen(onBack: () -> Unit, onFinished: (Long) -> Unit, onOpenEx
             onDelete = { ex -> vm.launch { vm.repo.deleteExerciseIfUnused(ex.id) } },
         )
     }
+    tmFor?.let { ex ->
+        TrainingMaxDialog(
+            exerciseName = ex.row.exerciseName,
+            currentKg = ex.row.trainingMaxKg,
+            unit = settings.unit,
+            suggest = { vm.repo.suggestedTrainingMax(ex.row.exerciseId, settings.unit) },
+            onDismiss = { tmFor = null },
+            onSave = { kg -> tmFor = null; vm.launch { vm.repo.applyTrainingMax(ex.row.id, kg, settings.unit) } },
+        )
+    }
     plateFor?.let { w ->
         PlateCalculatorDialog(w, settings.bar, settings.unit, onDismiss = { plateFor = null })
     }
@@ -284,8 +299,9 @@ fun ActiveWorkoutScreen(onBack: () -> Unit, onFinished: (Long) -> Unit, onOpenEx
                 confirmFinish = false
                 finishing = true
                 vm.launch {
-                    if (vm.repo.finishSession(session.id)) {
+                    if (vm.repo.finishSession(session.id, settings.unit)) {
                         RestTimer.skip()
+                        container.syncToHealth(session.id)
                         onFinished(session.id)
                     } else {
                         finishing = false
@@ -392,6 +408,8 @@ private fun ExerciseCard(
     onDeleteSet: (Long) -> Unit,
     onSetType: (Long, SetType) -> Unit,
     onRpe: (Long, Double?) -> Unit,
+    onAmrap: (Long, Boolean) -> Unit,
+    onTrainingMax: () -> Unit,
     onEditSet: (Long, Double, Int) -> Unit,
     onToggleSet: (SetLog, Double, Int) -> Unit,
 ) {
@@ -427,6 +445,10 @@ private fun ExerciseCard(
                     DropdownMenuItem(text = { Text("Rest time") }, leadingIcon = { Icon(Icons.Rounded.Timer, null) },
                         onClick = { menu = false; editRest = true })
                     DropdownMenuItem(text = { Text("Add warm-up sets") }, onClick = { menu = false; onWarmups() })
+                    DropdownMenuItem(
+                        text = { Text(if (ex.row.trainingMaxKg != null) "Training max: ${Units.formatWithUnit(ex.row.trainingMaxKg, unit)}" else "Set training max") },
+                        onClick = { menu = false; onTrainingMax() },
+                    )
                     if (supersetLabel != null) {
                         DropdownMenuItem(text = { Text("Remove from superset") }, onClick = { menu = false; onSuperset(false) })
                     }
@@ -482,6 +504,7 @@ private fun ExerciseCard(
                 onDelete = { onDeleteSet(set.id) },
                 onSetType = { onSetType(set.id, it) },
                 onRpe = { onRpe(set.id, it) },
+                onAmrap = { onAmrap(set.id, it) },
                 onEdit = onEditSet, onToggle = onToggleSet,
             )
         }
@@ -529,6 +552,7 @@ private fun SetRow(
     onDelete: () -> Unit,
     onSetType: (SetType) -> Unit,
     onRpe: (Double?) -> Unit,
+    onAmrap: (Boolean) -> Unit,
     onEdit: (Long, Double, Int) -> Unit,
     onToggle: (SetLog, Double, Int) -> Unit,
 ) {
@@ -546,7 +570,8 @@ private fun SetRow(
         SetType.WARMUP -> "W" to Brand.Ember
         SetType.FAILURE -> "F" to Brand.Danger
         SetType.DROP -> "D" to Brand.Ice
-        SetType.NORMAL -> workingNumber.toString() to (if (set.completed) Brand.Volt else Brand.TextMid)
+        SetType.NORMAL -> (workingNumber.toString() + if (set.amrap) "+" else "") to
+            (if (set.completed || set.amrap) Brand.Volt else Brand.TextMid)
     }
 
     Row(
@@ -570,6 +595,11 @@ private fun SetRow(
                         onClick = { menu = false; onSetType(t) },
                     )
                 }
+                DropdownMenuItem(
+                    text = { Text(if (set.amrap) "AMRAP: on" else "AMRAP (as many reps as possible)") },
+                    leadingIcon = { if (set.amrap) Icon(Icons.Rounded.Check, null, tint = Brand.Volt) },
+                    onClick = { menu = false; onAmrap(!set.amrap) },
+                )
                 DropdownMenuItem(text = { Text("Delete set", color = Brand.Danger) }, onClick = { menu = false; onDelete() })
             }
         }
@@ -589,7 +619,7 @@ private fun SetRow(
             placeholder = "0", modifier = Modifier.width(widths.weight))
         Spacer(Modifier.width(6.dp))
         CellField(reps, { reps = it; onEdit(set.id, weightKg(), repsInt()) }, decimal = false, enabled = !set.completed,
-            placeholder = "0", modifier = Modifier.width(widths.reps))
+            placeholder = set.targetReps?.let { "$it+" } ?: "0", modifier = Modifier.width(widths.reps))
         if (trackRpe) {
             Spacer(Modifier.width(6.dp))
             Box(
@@ -687,6 +717,42 @@ fun RestDialog(initialSeconds: Int, onDismiss: () -> Unit, onSave: (Int) -> Unit
             }
         },
         confirmButton = { TextButton(onClick = { onSave(secs) }) { Text("Save") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+@Composable
+private fun TrainingMaxDialog(
+    exerciseName: String,
+    currentKg: Double?,
+    unit: WeightUnit,
+    suggest: suspend () -> Double?,
+    onDismiss: () -> Unit,
+    onSave: (Double) -> Unit,
+) {
+    var text by remember { mutableStateOf(currentKg?.let { Units.format(it, unit) } ?: "") }
+    var suggestion by remember { mutableStateOf<Double?>(null) }
+    LaunchedEffect(Unit) { suggestion = suggest() }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("$exerciseName training max") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                NumberField(text, { text = it }, label = "Training max", suffix = unit.label, modifier = Modifier.fillMaxWidth())
+                Text(
+                    "Percentages are taken from this. A common choice is about 90% of your true 1-rep max.",
+                    style = MaterialTheme.typography.bodySmall, color = Brand.TextMid,
+                )
+                suggestion?.let { kg ->
+                    Pill("Use ${Units.formatWithUnit(kg, unit)} (90% of your best est. 1RM)", color = Brand.Ice,
+                        modifier = Modifier.clickable { text = Units.format(kg, unit) })
+                }
+            }
+        },
+        confirmButton = {
+            val v = Units.parse(text)
+            TextButton(enabled = v != null && v > 0, onClick = { onSave(Units.toKg(v!!, unit)) }) { Text("Save") }
+        },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }

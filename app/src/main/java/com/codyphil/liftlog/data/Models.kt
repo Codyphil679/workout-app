@@ -18,6 +18,8 @@ data class DayExerciseWithName(
     val supersetGroup: Int?,
     val autoWarmup: Boolean,
     val muscle: Muscle,
+    val percentScheme: String?,
+    val trainingMaxKg: Double?,
 )
 
 data class DaySummary(
@@ -56,6 +58,8 @@ data class SessionExerciseRow(
     val supersetGroup: Int?,
     val note: String?,
     val repMax: Int?,
+    val percentScheme: String?,
+    val trainingMaxKg: Double?,
 )
 
 data class ExerciseSetRow(
@@ -65,6 +69,7 @@ data class ExerciseSetRow(
     val setNumber: Int,
     val weightKg: Double,
     val reps: Int,
+    val rpe: Double? = null,
 )
 
 data class ExerciseHistorySummary(
@@ -95,3 +100,21 @@ data class DayWithProgram(
 )
 
 data class MuscleSets(val muscle: Muscle, val sets: Int)
+
+/** A completed working set with its muscle and time, for recovery and recaps. */
+data class MuscleSetEvent(
+    val muscle: Muscle,
+    val completedAt: Long,
+)
+
+/** A completed working set with exercise and workout info, for monthly recaps. */
+data class RecapSetRow(
+    val sessionId: Long,
+    val startedAt: Long,
+    val endedAt: Long,
+    val exerciseId: Long,
+    val exerciseName: String,
+    val muscle: Muscle,
+    val weightKg: Double,
+    val reps: Int,
+)

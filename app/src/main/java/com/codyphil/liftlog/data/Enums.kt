@@ -16,6 +16,8 @@ enum class Progression(val label: String) {
     LINEAR("Linear"),
     /** Work up a rep range; when every set hits the top of the range → add weight, reset to the bottom. */
     DOUBLE("Double"),
+    /** Each set is a percentage of the exercise's training max; an AMRAP set adjusts the training max. */
+    PERCENT("% TM"),
 }
 
 enum class Muscle(val label: String) {

@@ -17,6 +17,8 @@ data class Exercise(
     val name: String,
     /** Primary muscle, used for weekly sets-per-muscle. */
     @ColumnInfo(defaultValue = "OTHER") val muscle: Muscle = Muscle.OTHER,
+    /** Training max for percentage-based programs (usually ~90% of a true 1RM). */
+    val trainingMaxKg: Double? = null,
 )
 
 @Entity(tableName = "programs")
@@ -66,6 +68,8 @@ data class DayExercise(
     /** Exercises sharing a group number in the same day are done as a superset. */
     val supersetGroup: Int? = null,
     @ColumnInfo(defaultValue = "0") val autoWarmup: Boolean = false,
+    /** For PERCENT progression: sets as "75x5,80x5,85x5+" (percent of training max × reps, + = AMRAP). */
+    val percentScheme: String? = null,
 )
 
 @Entity(
@@ -83,6 +87,10 @@ data class WorkoutSession(
     /** Null while the workout is in progress. */
     val endedAt: Long? = null,
     val notes: String = "",
+    /** Average of the pre-workout readiness check-in (1–5), if one was done. */
+    val readiness: Double? = null,
+    /** 1.0 = as planned; 0.9 = lighter day. Lighter days are ignored by progression. */
+    @ColumnInfo(defaultValue = "1.0") val intensity: Double = 1.0,
 )
 
 @Entity(
@@ -105,6 +113,8 @@ data class SessionExercise(
     val note: String? = null,
     /** Top of the rep range when the exercise uses double progression. */
     val repMax: Int? = null,
+    /** Copied from the program day for % TM exercises, so weights can be recalculated if the training max changes. */
+    val percentScheme: String? = null,
 )
 
 @Entity(
@@ -130,6 +140,9 @@ data class SetLog(
     @ColumnInfo(defaultValue = "NORMAL") val setType: SetType = SetType.NORMAL,
     /** Rate of perceived exertion, 6–10 in 0.5 steps. */
     val rpe: Double? = null,
+    /** As many reps as possible; [targetReps] is the minimum to aim for. */
+    @ColumnInfo(defaultValue = "0") val amrap: Boolean = false,
+    val targetReps: Int? = null,
 )
 
 @Entity(tableName = "body_metrics", indices = [Index("recordedAt")])

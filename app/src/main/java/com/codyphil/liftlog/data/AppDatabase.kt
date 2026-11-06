@@ -11,11 +11,13 @@ import androidx.room.RoomDatabase
         Exercise::class, Program::class, ProgramDay::class, DayExercise::class,
         WorkoutSession::class, SessionExercise::class, SetLog::class, BodyEntry::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = true,
     autoMigrations = [
         // v2: set types, RPE, supersets, progression, muscle groups, body metrics. Additive only.
         AutoMigration(from = 1, to = 2),
+        // v3: training max + % schemes, AMRAP sets, readiness check-in, lighter days. Additive only.
+        AutoMigration(from = 2, to = 3),
     ],
 )
 abstract class AppDatabase : RoomDatabase() {

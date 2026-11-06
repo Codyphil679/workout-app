@@ -18,7 +18,8 @@ class BackupManager(private val db: AppDatabase, private val clock: () -> Long =
             put("format", FORMAT)
             put("version", VERSION)
             put("exportedAt", clock())
-            put("exercises", dao.exercises().toJson { JSONObject().put("id", it.id).put("name", it.name).put("muscle", it.muscle.name) })
+            put("exercises", dao.exercises().toJson { JSONObject().put("id", it.id).put("name", it.name).put("muscle", it.muscle.name)
+                .put("trainingMaxKg", it.trainingMaxKg ?: JSONObject.NULL) })
             put("programs", dao.programs().toJson {
                 JSONObject().put("id", it.id).put("name", it.name).put("notes", it.notes).put("createdAt", it.createdAt)
             })
@@ -31,18 +32,19 @@ class BackupManager(private val db: AppDatabase, private val clock: () -> Long =
                     .put("targetWeightKg", it.targetWeightKg).put("restSeconds", it.restSeconds)
                     .put("progression", it.progression.name).put("incrementKg", it.incrementKg)
                     .put("repMax", it.repMax ?: JSONObject.NULL).put("supersetGroup", it.supersetGroup ?: JSONObject.NULL)
-                    .put("autoWarmup", it.autoWarmup)
+                    .put("autoWarmup", it.autoWarmup).put("percentScheme", it.percentScheme ?: JSONObject.NULL)
             })
             put("sessions", dao.sessions().toJson {
                 JSONObject().put("id", it.id).put("name", it.name).put("programDayId", it.programDayId ?: JSONObject.NULL)
                     .put("startedAt", it.startedAt).put("endedAt", it.endedAt ?: JSONObject.NULL).put("notes", it.notes)
+                    .put("readiness", it.readiness ?: JSONObject.NULL).put("intensity", it.intensity)
             })
             put("sessionExercises", dao.sessionExercises().toJson {
                 JSONObject().put("id", it.id).put("sessionId", it.sessionId).put("exerciseId", it.exerciseId)
                     .put("position", it.position).put("restSeconds", it.restSeconds)
                     .put("targetReps", it.targetReps ?: JSONObject.NULL)
                     .put("supersetGroup", it.supersetGroup ?: JSONObject.NULL).put("note", it.note ?: JSONObject.NULL)
-                    .put("repMax", it.repMax ?: JSONObject.NULL)
+                    .put("repMax", it.repMax ?: JSONObject.NULL).put("percentScheme", it.percentScheme ?: JSONObject.NULL)
             })
             put("setLogs", dao.setLogs().toJson {
                 JSONObject().put("id", it.id).put("sessionExerciseId", it.sessionExerciseId).put("setNumber", it.setNumber)
@@ -50,6 +52,7 @@ class BackupManager(private val db: AppDatabase, private val clock: () -> Long =
                     .put("completedAt", it.completedAt ?: JSONObject.NULL)
                     .put("restBeforeSeconds", it.restBeforeSeconds ?: JSONObject.NULL)
                     .put("setType", it.setType.name).put("rpe", it.rpe ?: JSONObject.NULL)
+                    .put("amrap", it.amrap).put("targetReps", it.targetReps ?: JSONObject.NULL)
             })
             put("bodyMetrics", dao.bodyEntries().toJson {
                 JSONObject().put("id", it.id).put("metric", it.metric.name).put("value", it.value).put("recordedAt", it.recordedAt)
@@ -68,7 +71,10 @@ class BackupManager(private val db: AppDatabase, private val clock: () -> Long =
         require(version in 1..VERSION) { "Unsupported backup version $version" }
 
         val exercises = root.getJSONArray("exercises").map {
-            Exercise(it.getLong("id"), it.getString("name"), enumOr(it.optString("muscle"), Muscle.OTHER))
+            Exercise(
+                it.getLong("id"), it.getString("name"), enumOr(it.optString("muscle"), Muscle.OTHER),
+                trainingMaxKg = it.optDoubleOrNull("trainingMaxKg"),
+            )
         }
         val programs = root.getJSONArray("programs").map {
             Program(it.getLong("id"), it.getString("name"), it.optString("notes"), it.getLong("createdAt"))
@@ -85,12 +91,15 @@ class BackupManager(private val db: AppDatabase, private val clock: () -> Long =
                 repMax = it.optLongOrNull("repMax")?.toInt(),
                 supersetGroup = it.optLongOrNull("supersetGroup")?.toInt(),
                 autoWarmup = it.optBoolean("autoWarmup", false),
+                percentScheme = if (it.isNull("percentScheme") || !it.has("percentScheme")) null else it.getString("percentScheme"),
             )
         }
         val sessions = root.getJSONArray("sessions").map {
             WorkoutSession(
                 it.getLong("id"), it.getString("name"), it.optLongOrNull("programDayId"),
                 it.getLong("startedAt"), it.optLongOrNull("endedAt"), it.optString("notes"),
+                readiness = it.optDoubleOrNull("readiness"),
+                intensity = it.optDouble("intensity", 1.0),
             )
         }
         val sessionExercises = root.getJSONArray("sessionExercises").map {
@@ -100,6 +109,7 @@ class BackupManager(private val db: AppDatabase, private val clock: () -> Long =
                 supersetGroup = it.optLongOrNull("supersetGroup")?.toInt(),
                 note = if (it.isNull("note") || !it.has("note")) null else it.getString("note"),
                 repMax = it.optLongOrNull("repMax")?.toInt(),
+                percentScheme = if (it.isNull("percentScheme") || !it.has("percentScheme")) null else it.getString("percentScheme"),
             )
         }
         val sets = root.getJSONArray("setLogs").map {
@@ -108,7 +118,9 @@ class BackupManager(private val db: AppDatabase, private val clock: () -> Long =
                 it.getInt("reps"), it.getBoolean("completed"), it.optLongOrNull("completedAt"),
                 it.optLongOrNull("restBeforeSeconds")?.toInt(),
                 setType = enumOr(it.optString("setType"), SetType.NORMAL),
-                rpe = if (it.isNull("rpe") || !it.has("rpe")) null else it.getDouble("rpe"),
+                rpe = it.optDoubleOrNull("rpe"),
+                amrap = it.optBoolean("amrap", false),
+                targetReps = it.optLongOrNull("targetReps")?.toInt(),
             )
         }
         val body = root.optJSONArray("bodyMetrics")?.map {
@@ -153,7 +165,7 @@ class BackupManager(private val db: AppDatabase, private val clock: () -> Long =
 
     companion object {
         const val FORMAT = "liftlog-backup"
-        const val VERSION = 2
+        const val VERSION = 3
 
         /** RFC 4180 quoting, plus a leading quote on formula-like cells so spreadsheets don't execute them. */
         fun csv(value: String): String {
@@ -172,5 +184,7 @@ private inline fun <T> JSONArray.map(block: (JSONObject) -> T): List<T> =
 
 private inline fun <reified E : Enum<E>> enumOr(name: String?, fallback: E): E =
     if (name.isNullOrEmpty()) fallback else runCatching { enumValueOf<E>(name) }.getOrDefault(fallback)
+
+private fun JSONObject.optDoubleOrNull(key: String): Double? = if (isNull(key) || !has(key)) null else getDouble(key)
 
 private fun JSONObject.optLongOrNull(key: String): Long? = if (isNull(key) || !has(key)) null else getLong(key)

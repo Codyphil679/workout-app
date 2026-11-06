@@ -52,6 +52,7 @@ import com.codyphil.liftlog.ui.appContainer
 import com.codyphil.liftlog.ui.components.ConfirmDialog
 import com.codyphil.liftlog.ui.components.Eyebrow
 import com.codyphil.liftlog.ui.components.Panel
+import com.codyphil.liftlog.ui.components.Pill
 import com.codyphil.liftlog.ui.components.StatTile
 import com.codyphil.liftlog.ui.theme.Brand
 import com.codyphil.liftlog.ui.theme.Numeric
@@ -103,6 +104,13 @@ fun SessionDetailScreen(sessionId: Long, onBack: () -> Unit, onOpenExercise: (Lo
                     StatTile("Sets", allSets.size.toString(), Modifier.weight(1f))
                     StatTile("Volume", compact(Units.fromKg(allSets.sumOf { it.weightKg * it.reps }, unit)), Modifier.weight(1f), unit = unit.label)
                 }
+                if (s.readiness != null || s.intensity < 0.999) {
+                    Spacer(Modifier.height(10.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        s.readiness?.let { Pill("Readiness ${Units.formatNumber(Math.round(it * 10) / 10.0)}/5", color = Brand.Ice) }
+                        if (s.intensity < 0.999) Pill("Lighter day −${Math.round((1 - s.intensity) * 100)}%", color = Brand.Ember)
+                    }
+                }
                 if (s.notes.isNotBlank()) {
                     Spacer(Modifier.height(10.dp))
                     Text(s.notes, color = Brand.TextMid)
@@ -141,6 +149,10 @@ private fun ExerciseBlock(ex: SessionExerciseWithSets, unit: WeightUnit, onOpen:
             }
             Icon(Icons.AutoMirrored.Rounded.ArrowForward, "Progress", tint = Brand.TextLow)
         }
+        ex.row.note?.takeIf { it.startsWith("Training max") && it.contains("→") }?.let {
+            Spacer(Modifier.height(6.dp))
+            Text(it, style = MaterialTheme.typography.labelMedium, color = if (it.contains("missed") || it.contains(" of ")) Brand.Ember else Brand.Volt)
+        }
         Spacer(Modifier.height(10.dp))
         Row(Modifier.padding(bottom = 4.dp)) {
             Eyebrow("Set", modifier = Modifier.width(44.dp))
@@ -152,7 +164,8 @@ private fun ExerciseBlock(ex: SessionExerciseWithSets, unit: WeightUnit, onOpen:
                 SetType.WARMUP -> "W" to Brand.Ember
                 SetType.FAILURE -> "F" to Brand.Danger
                 SetType.DROP -> "D" to Brand.Ice
-                SetType.NORMAL -> (working.indexOf(set) + 1).toString() to Brand.TextMid
+                SetType.NORMAL -> ((working.indexOf(set) + 1).toString() + if (set.amrap) "+" else "") to
+                    (if (set.amrap) Brand.Volt else Brand.TextMid)
             }
             val isWarmup = set.setType == SetType.WARMUP
             Row(Modifier.fillMaxWidth().padding(vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {

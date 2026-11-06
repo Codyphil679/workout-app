@@ -1,5 +1,6 @@
 package com.codyphil.liftlog.ui.programs
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -11,6 +12,8 @@ import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import com.codyphil.liftlog.data.Progression
+import com.codyphil.liftlog.domain.PercentScheme
+import com.codyphil.liftlog.domain.PercentSet
 import com.codyphil.liftlog.domain.Progressions
 import kotlin.math.roundToInt
 import androidx.compose.foundation.layout.Box
@@ -64,6 +67,7 @@ import com.codyphil.liftlog.domain.WeightUnit
 import com.codyphil.liftlog.ui.appContainer
 import com.codyphil.liftlog.ui.components.ExercisePickerSheet
 import com.codyphil.liftlog.ui.components.Eyebrow
+import com.codyphil.liftlog.ui.components.rememberDayStarter
 import com.codyphil.liftlog.ui.components.NumberField
 import com.codyphil.liftlog.ui.components.Panel
 import com.codyphil.liftlog.ui.components.Pill
@@ -86,6 +90,7 @@ fun DayEditorScreen(dayId: Long, onBack: () -> Unit, onStartWorkout: () -> Unit)
     val exercises by repo.observeExercises().collectAsStateWithLifecycle(emptyList())
     val active by repo.observeActiveSession().collectAsStateWithLifecycle(null)
     var picker by remember { mutableStateOf(false) }
+    val startDay = rememberDayStarter(onStarted = onStartWorkout)
     var editing by remember { mutableStateOf<EditTarget?>(null) }
     var renaming by remember { mutableStateOf(false) }
     var loaded by remember { mutableStateOf(false) }
@@ -107,7 +112,7 @@ fun DayEditorScreen(dayId: Long, onBack: () -> Unit, onStartWorkout: () -> Unit)
             if (items.isNotEmpty()) {
                 Box(Modifier.fillMaxWidth().navigationBarsPadding().padding(16.dp)) {
                     Button(
-                        onClick = { scope.launch { container.startFromDay(dayId); onStartWorkout() } },
+                        onClick = { startDay(dayId) },
                         enabled = active == null,
                         modifier = Modifier.fillMaxWidth().height(56.dp),
                     ) {
@@ -166,12 +171,16 @@ fun DayEditorScreen(dayId: Long, onBack: () -> Unit, onStartWorkout: () -> Unit)
     editing?.let { target ->
         val e = target.existing
         val defaults = Progressions.defaultFor(target.name, if (e == null) 8 else e.targetReps, settings.unit)
+        val tm = exercises.firstOrNull { it.id == target.exerciseId }?.trainingMaxKg
         val initial = e?.let { TargetValues(it.targetSets, it.targetReps, it.repMax ?: (it.targetReps + 4), it.targetWeightKg, it.restSeconds,
-            it.progression, it.incrementKg.takeIf { inc -> inc > 0 } ?: defaults.incrementKg, it.autoWarmup) }
+            it.progression, it.incrementKg.takeIf { inc -> inc > 0 } ?: defaults.incrementKg, it.autoWarmup,
+            it.percentScheme ?: PercentScheme.presets.first().second, tm) }
             ?: if (defaults.progression == Progression.LINEAR) {
-                TargetValues(3, 5, 9, 0.0, maxOf(settings.defaultRestSeconds, 150), Progression.LINEAR, defaults.incrementKg, true)
+                TargetValues(3, 5, 9, 0.0, maxOf(settings.defaultRestSeconds, 150), Progression.LINEAR, defaults.incrementKg, true,
+                    PercentScheme.presets.first().second, tm)
             } else {
-                TargetValues(3, 8, defaults.repMax ?: 12, 0.0, settings.defaultRestSeconds, Progression.DOUBLE, defaults.incrementKg, false)
+                TargetValues(3, 8, defaults.repMax ?: 12, 0.0, settings.defaultRestSeconds, Progression.DOUBLE, defaults.incrementKg, false,
+                    PercentScheme.presets.first().second, tm)
             }
         TargetDialog(
             title = target.name,
@@ -181,11 +190,18 @@ fun DayEditorScreen(dayId: Long, onBack: () -> Unit, onStartWorkout: () -> Unit)
             onSave = { v ->
                 editing = null
                 val repMax = if (v.progression == Progression.DOUBLE) v.repMax else null
+                val scheme = if (v.progression == Progression.PERCENT) v.percentScheme else null
+                val parsed = PercentScheme.parse(scheme)
+                val sets = if (parsed.isNotEmpty()) parsed.size else v.sets
+                val reps = parsed.firstOrNull()?.reps ?: v.reps
                 scope.launch {
-                    if (e == null) repo.addDayExercise(dayId, target.exerciseId, v.sets, v.reps, v.weightKg, v.rest,
-                        v.progression, v.incrementKg, repMax, v.autoWarmup)
-                    else repo.updateDayExercise(e.id, dayId, v.sets, v.reps, v.weightKg, v.rest,
-                        v.progression, v.incrementKg, repMax, v.autoWarmup)
+                    if (v.progression == Progression.PERCENT && v.trainingMaxKg != null) {
+                        repo.setTrainingMax(target.exerciseId, v.trainingMaxKg)
+                    }
+                    if (e == null) repo.addDayExercise(dayId, target.exerciseId, sets, reps, v.weightKg, v.rest,
+                        v.progression, v.incrementKg, repMax, v.autoWarmup, percentScheme = scheme)
+                    else repo.updateDayExercise(e.id, dayId, sets, reps, v.weightKg, v.rest,
+                        v.progression, v.incrementKg, repMax, v.autoWarmup, percentScheme = scheme)
                 }
             },
         )
@@ -222,12 +238,17 @@ private fun DayExerciseRow(
                 Text(item.exerciseName, style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(6.dp))
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    val reps = if (item.progression == Progression.DOUBLE && item.repMax != null) "${item.targetReps}–${item.repMax}"
-                    else "${item.targetReps}"
-                    Pill("${item.targetSets} × $reps")
-                    if (item.targetWeightKg > 0) Pill(Units.formatWithUnit(item.targetWeightKg, unit), color = Brand.TextHi)
+                    if (item.progression == Progression.PERCENT) {
+                        Pill(PercentScheme.describe(PercentScheme.parse(item.percentScheme)))
+                        Pill(item.trainingMaxKg?.let { "TM ${Units.formatWithUnit(it, unit)}" } ?: "TM not set", color = Brand.Ember)
+                    } else {
+                        val reps = if (item.progression == Progression.DOUBLE && item.repMax != null) "${item.targetReps}–${item.repMax}"
+                        else "${item.targetReps}"
+                        Pill("${item.targetSets} × $reps")
+                        if (item.targetWeightKg > 0) Pill(Units.formatWithUnit(item.targetWeightKg, unit), color = Brand.TextHi)
+                    }
                     Pill("⏱ ${Format.duration(item.restSeconds.toLong())}", color = Brand.Ice)
-                    if (item.progression != Progression.NONE) {
+                    if (item.progression == Progression.LINEAR || item.progression == Progression.DOUBLE) {
                         Pill("${item.progression.label} +${Units.formatWithUnit(item.incrementKg, unit)}", color = Brand.Ember)
                     }
                     if (item.autoWarmup) Pill("Warm-ups", color = Brand.TextMid)
@@ -257,6 +278,8 @@ private data class TargetValues(
     val progression: Progression,
     val incrementKg: Double,
     val autoWarmup: Boolean,
+    val percentScheme: String,
+    val trainingMaxKg: Double?,
 )
 
 @Composable
@@ -274,6 +297,8 @@ private fun TargetDialog(
     var progression by remember { mutableStateOf(initial.progression) }
     var autoWarmup by remember { mutableStateOf(initial.autoWarmup) }
     var weight by remember { mutableStateOf(if (initial.weightKg > 0) Units.format(initial.weightKg, unit) else "") }
+    var scheme by remember { mutableStateOf(PercentScheme.parse(initial.percentScheme)) }
+    var tmText by remember { mutableStateOf(initial.trainingMaxKg?.let { Units.format(it, unit) } ?: "") }
     // Increment is edited in the display unit, in 2.5 lb / 1.25 kg steps.
     val incStep = if (unit == WeightUnit.LB) 2.5 else 1.25
     var incSteps by remember {
@@ -293,7 +318,7 @@ private fun TargetDialog(
                             shape = SegmentedButtonDefaults.itemShape(i, Progression.entries.size),
                             colors = SegmentedButtonDefaults.colors(activeContainerColor = Brand.Volt, activeContentColor = Brand.Ink),
                             icon = {},
-                        ) { Text(p.label) }
+                        ) { Text(p.label, maxLines = 1) }
                     }
                 }
                 val incLabel = Units.formatNumber(incSteps * incStep) + " " + unit.label
@@ -302,10 +327,19 @@ private fun TargetDialog(
                         Progression.NONE -> "Each workout starts with what you lifted last time."
                         Progression.LINEAR -> "Hit $sets×$reps → add $incLabel next time. Miss two workouts in a row → drop 10%."
                         Progression.DOUBLE -> "Work from $reps up to $repMax reps. When every set hits $repMax → add $incLabel and go back to $reps."
+                        Progression.PERCENT -> "Each set is a % of your training max (TM). A “+” set is as many reps as possible: " +
+                            "miss its target → TM −10%; hit it → TM goes up; beat it by 5+ reps → bigger jump."
                     },
                     style = MaterialTheme.typography.bodySmall, color = Brand.TextMid,
                 )
-                Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                if (progression == Progression.PERCENT) {
+                    PercentEditor(scheme, { scheme = it })
+                    NumberField(tmText, { tmText = it }, label = "Training max", suffix = unit.label, modifier = Modifier.fillMaxWidth())
+                    Text(
+                        "Usually about 90% of your true 1-rep max. Leave empty and it's set from your history the first time.",
+                        style = MaterialTheme.typography.bodySmall, color = Brand.TextLow,
+                    )
+                } else Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
                     Stepper("Sets", sets, { sets = it }, min = 1, max = 20)
                     Stepper(if (progression == Progression.DOUBLE) "Min reps" else "Reps", reps,
                         { reps = it; if (repMax < it) repMax = it }, min = 1, max = 100)
@@ -320,11 +354,13 @@ private fun TargetDialog(
                     Stepper("Add each time (${unit.label})", incSteps, { incSteps = it }, min = 1, max = 40,
                         display = { Units.formatNumber(it * incStep) }, modifier = Modifier.fillMaxWidth())
                 }
-                NumberField(weight, { weight = it }, label = "Starting weight", suffix = unit.label, modifier = Modifier.fillMaxWidth())
-                Text(
-                    "Used the first time only. After that, progression decides.",
-                    style = MaterialTheme.typography.bodySmall, color = Brand.TextLow,
-                )
+                if (progression != Progression.PERCENT) {
+                    NumberField(weight, { weight = it }, label = "Starting weight", suffix = unit.label, modifier = Modifier.fillMaxWidth())
+                    Text(
+                        "Used the first time only. After that, progression decides.",
+                        style = MaterialTheme.typography.bodySmall, color = Brand.TextLow,
+                    )
+                }
                 Stepper("Rest between sets", rest, { rest = it }, step = 15, min = 0, max = 900,
                     display = { Format.duration(it.toLong()) }, modifier = Modifier.fillMaxWidth())
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -346,10 +382,44 @@ private fun TargetDialog(
                     TargetValues(
                         sets, reps, repMax, Units.toKg(Units.parse(weight) ?: 0.0, unit), rest, progression,
                         Units.toKg(incSteps * incStep, unit), autoWarmup,
+                        PercentScheme.format(scheme.ifEmpty { PercentScheme.parse(PercentScheme.presets.first().second) }),
+                        Units.parse(tmText)?.takeIf { it > 0 }?.let { Units.toKg(it, unit) },
                     )
                 )
             }) { Text("Save") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun PercentEditor(sets: List<PercentSet>, onChange: (List<PercentSet>) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Eyebrow("Sets")
+        sets.forEachIndexed { i, ps ->
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("${i + 1}", style = MaterialTheme.typography.titleSmall, color = Brand.TextMid, modifier = Modifier.width(16.dp))
+                Stepper("%", ps.percent.roundToInt(), { v -> onChange(sets.toMutableList().also { it[i] = ps.copy(percent = v.toDouble()) }) },
+                    step = 5, min = 30, max = 110)
+                Stepper("Reps", ps.reps, { v -> onChange(sets.toMutableList().also { it[i] = ps.copy(reps = v) }) }, min = 1, max = 30)
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Eyebrow("+")
+                    Spacer(Modifier.height(6.dp))
+                    Pill(if (ps.amrap) "AMRAP" else "—", color = if (ps.amrap) Brand.Volt else Brand.TextLow,
+                        modifier = Modifier.clickable { onChange(sets.toMutableList().also { it[i] = ps.copy(amrap = !ps.amrap) }) })
+                }
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TextButton(onClick = { onChange(sets + (sets.lastOrNull()?.copy(amrap = false) ?: PercentSet(75.0, 5))) }) { Text("+ Set") }
+            if (sets.size > 1) TextButton(onClick = { onChange(sets.dropLast(1)) }) { Text("− Set", color = Brand.TextMid) }
+        }
+        Eyebrow("Presets")
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            PercentScheme.presets.forEach { (name, value) ->
+                Pill(name, color = Brand.Ice, modifier = Modifier.clickable { onChange(PercentScheme.parse(value)) })
+            }
+        }
+    }
 }

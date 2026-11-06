@@ -56,6 +56,8 @@ import com.codyphil.liftlog.domain.Format
 import com.codyphil.liftlog.domain.Units
 import com.codyphil.liftlog.ui.appContainer
 import com.codyphil.liftlog.ui.components.Eyebrow
+import com.codyphil.liftlog.ui.components.rememberDayStarter
+import com.codyphil.liftlog.ui.recovery.rememberRecovery
 import com.codyphil.liftlog.ui.components.IconBadge
 import com.codyphil.liftlog.ui.components.Panel
 import com.codyphil.liftlog.ui.components.Pill
@@ -68,7 +70,12 @@ import kotlinx.coroutines.launch
 import java.util.Calendar
 
 @Composable
-fun TrainScreen(onOpenWorkout: () -> Unit, onOpenPrograms: () -> Unit, onOpenSession: (Long) -> Unit) {
+fun TrainScreen(
+    onOpenWorkout: () -> Unit,
+    onOpenPrograms: () -> Unit,
+    onOpenSession: (Long) -> Unit,
+    onOpenRecovery: () -> Unit,
+) {
     val container = appContainer()
     val repo = container.repository
     val scope = rememberCoroutineScope()
@@ -80,10 +87,12 @@ fun TrainScreen(onOpenWorkout: () -> Unit, onOpenPrograms: () -> Unit, onOpenSes
     val weekStart = remember { startOfWeek() }
     val thisWeek = sessions.filter { it.startedAt >= weekStart }
     val upNext = remember(days, sessions) { upNext(days, sessions) }
+    val recovery = rememberRecovery()
 
     fun start(block: suspend () -> Unit) {
         scope.launch { block(); onOpenWorkout() }
     }
+    val startDay = rememberDayStarter(onStarted = onOpenWorkout)
 
     LazyColumn(
         contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 24.dp),
@@ -124,7 +133,7 @@ fun TrainScreen(onOpenWorkout: () -> Unit, onOpenPrograms: () -> Unit, onOpenSes
                         )
                         Spacer(Modifier.height(16.dp))
                         Button(
-                            onClick = { start { container.startFromDay(upNext.id) } },
+                            onClick = { startDay(upNext.id) },
                             enabled = upNext.exerciseCount > 0,
                             modifier = Modifier.fillMaxWidth().height(52.dp),
                         ) {
@@ -147,6 +156,7 @@ fun TrainScreen(onOpenWorkout: () -> Unit, onOpenPrograms: () -> Unit, onOpenSes
             }
         }
 
+        item { RecoveryCard(recovery, onOpenRecovery) }
         item {
             SectionHeader("Your program days")
         }
@@ -169,7 +179,7 @@ fun TrainScreen(onOpenWorkout: () -> Unit, onOpenPrograms: () -> Unit, onOpenSes
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     items(days, key = { it.id }) { day ->
                         DayCard(day, enabled = current == null && day.exerciseCount > 0) {
-                            start { container.startFromDay(day.id) }
+                            startDay(day.id)
                         }
                     }
                     item {
@@ -276,4 +286,26 @@ private fun greeting(): String = when (Calendar.getInstance().get(Calendar.HOUR_
     in 5..11 -> "Good morning"
     in 12..16 -> "Good afternoon"
     else -> "Good evening"
+}
+
+@Composable
+private fun RecoveryCard(recovery: List<com.codyphil.liftlog.domain.MuscleRecovery>, onOpen: () -> Unit) {
+    val recovering = recovery.filter { it.status == com.codyphil.liftlog.domain.RecoveryStatus.RECOVERING }
+    Panel(onClick = onOpen, contentPadding = PaddingValues(14.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Eyebrow("Recovery", color = Brand.Volt)
+                Text(
+                    if (recovering.isEmpty()) "Everything's recovered" else "Recovering: " + recovering.joinToString { it.muscle.label },
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 2, overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Icon(Icons.AutoMirrored.Rounded.ArrowForward, null, tint = Brand.TextLow)
+        }
+        Spacer(Modifier.height(10.dp))
+        com.codyphil.liftlog.ui.recovery.BodyMap(recovery.associate { it.muscle to it.status }, figureHeight = 140.dp)
+        Spacer(Modifier.height(6.dp))
+        com.codyphil.liftlog.ui.recovery.RecoveryLegend()
+    }
 }

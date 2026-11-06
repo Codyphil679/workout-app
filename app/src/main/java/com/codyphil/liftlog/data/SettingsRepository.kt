@@ -15,6 +15,9 @@ data class AppSettings(
     /** Empty-bar weight for each unit, used by the plate and warm-up calculators. */
     val barLb: Double = 45.0,
     val barKg: Double = 20.0,
+    /** Ask how you feel before starting a program day, and offer a lighter day when it's low. */
+    val readinessCheck: Boolean = true,
+    val healthConnectSync: Boolean = false,
 ) {
     val bar: Double get() = if (unit == WeightUnit.LB) barLb else barKg
 }
@@ -31,6 +34,8 @@ class SettingsRepository(context: Context) {
         trackRpe = prefs.getBoolean("trackRpe", false),
         barLb = prefs.getFloat("barLb", 45f).toDouble(),
         barKg = prefs.getFloat("barKg", 20f).toDouble(),
+        readinessCheck = prefs.getBoolean("readinessCheck", true),
+        healthConnectSync = prefs.getBoolean("healthConnectSync", false),
     )
 
     fun update(transform: (AppSettings) -> AppSettings) {
@@ -42,6 +47,8 @@ class SettingsRepository(context: Context) {
             putBoolean("trackRpe", next.trackRpe)
             putFloat("barLb", next.barLb.toFloat())
             putFloat("barKg", next.barKg.toFloat())
+            putBoolean("readinessCheck", next.readinessCheck)
+            putBoolean("healthConnectSync", next.healthConnectSync)
         }
         _settings.value = next
     }

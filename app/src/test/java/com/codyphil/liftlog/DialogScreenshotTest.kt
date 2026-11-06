@@ -30,6 +30,19 @@ import java.time.Duration
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 @Config(qualifiers = "w400dp-h860dp-xhdpi", application = LiftLogApp::class)
 class DialogScreenshotTest {
+    @Test fun readiness() {
+        val activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
+        activity.setContent {
+            LiftLogTheme {
+                Box(Modifier.fillMaxSize().background(Brand.Ink)) {
+                    com.codyphil.liftlog.ui.components.ReadinessDialog(onDismiss = {}, onSkip = {}, onStart = { _, _ -> })
+                }
+            }
+        }
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(1))
+        captureScreenRoboImage("build/outputs/roborazzi/16_readiness.png")
+    }
+
     @Test fun plateCalculator() {
         val activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
         activity.setContent {
