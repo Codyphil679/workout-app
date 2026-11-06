@@ -8,12 +8,15 @@ A native Android workout tracker: build programs, log weight/reps, auto-start a 
 
 Free, no account needed. Requires Android 8.0+ (not available for iPhone).
 First time installing an app from outside the Play Store? Follow the **[step-by-step install guide](INSTALL.md)** ([PDF](docs/LiftLog-Install-Guide.pdf)).
+New to the app? Read the **[user manual](docs/MANUAL.md)** ([PDF](docs/LiftLog-Manual.pdf)) or skim the **[feature list](FEATURES.md)**.
 
 ---
 
 Kotlin · Jetpack Compose (Material 3) · Room · no account, no backend. All data stays on the phone.
 
 ## Features
+
+**Full list: [FEATURES.md](FEATURES.md)** · **How to use it: [user manual](docs/MANUAL.md)** ([PDF](docs/LiftLog-Manual.pdf))
 
 **Program builder**
 - Programs → training days → exercises with target **sets × reps**, **starting weight**, and **rest time**
